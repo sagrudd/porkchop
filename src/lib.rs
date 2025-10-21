@@ -32,8 +32,9 @@
 
 pub mod kit;
 pub mod detect;
-pub mod data { pub mod adapters; pub mod barcodes; pub mod legacy; }
 pub mod kits;
+pub mod data { pub mod adapters; pub mod barcodes; pub mod legacy; pub mod cdna_legacy; }
+
 
 use kit::*;
 
@@ -255,5 +256,33 @@ mod provenance_tests {
         let nb01 = r2.iter().find(|(n, ..)| n == "NB01").unwrap();
         assert!(nb01.3.contains("nanoporetech.com/document/chemistry-technical-document"));
         assert!(nb01.4.to_lowercase().contains("appendix 14"));
+    }
+}
+#[cfg(test)]
+mod pcs_tests {
+    use super::*;
+    #[test]
+    fn pcs111_includes_ssp_and_vnp() {
+        let rows = kit_elements_rows_with_provenance("PCS111").unwrap();
+        let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
+        assert!(names.contains(&"SSP") && names.contains(&"VNP"));
+    }
+    #[test]
+    fn pcs114_uses_sspii_not_vnp() {
+        let rows = kit_elements_rows_with_provenance("PCS114").unwrap();
+        let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
+        assert!(names.contains(&"SSPII"));
+        assert!(!names.contains(&"VNP"));
+    }
+}
+
+
+#[cfg(test)]
+mod pcs_legacy_flag_tests {
+    use super::*;
+    #[test]
+    fn pcs114_is_not_legacy() {
+        let k = get_sequences_for_kit("PCS114").expect("PCS114 kit present");
+        assert!(!kit_is_legacy(k), "PCS114 must not be marked legacy");
     }
 }

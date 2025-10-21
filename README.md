@@ -13,6 +13,10 @@ porkchop = "0.1"
 ```
 
 ## Kit coverage
+
+- PCS111 (PCR‑cDNA Sequencing)
+- PCS114 (PCR‑cDNA Sequencing V14)
+
 **Current (Kit 14)**
 
 - LSK114 / LSK114‑XL — LA adapter.
@@ -106,3 +110,16 @@ Columns:
 - `sequence`
 - `provenance_url`
 - `provenance_ref`
+
+### PCS111 & PCS114 support
+
+> **Note:** PCS114 (Kit 14) is a current product and is **not** considered legacy.
+
+- **PCS111 (SQK‑PCS111)** — classified as *rapid* (uses Rapid adapters). Primers included:
+  - `SSP` and `VNP` (legacy PCR‑cDNA), sourced from **pychopper** default primer file (`cDNA_SSP_VNP.fas`).
+  - Also includes `CRTA` and `RTP`.
+- **PCS114 (SQK‑PCS114, Kit 14)** — uses `SSPII`, `RTP`, `CRTA` and Rapid adapters.
+
+`porkchop describe-kit PCS111` and `porkchop describe-kit PCS114` will list **all primers/adapters** with
+full **provenance** columns (`provenance_url`, `provenance_ref`). SSP/VNP rows cite the pychopper file;
+Kit 14 primers cite the Chemistry Technical Document Appendix 15.

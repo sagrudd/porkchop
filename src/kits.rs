@@ -3,6 +3,8 @@
 //! This includes current **Kit 14** families and selected legacy kits to help
 //! interpret older datasets.
 use crate::kit::{Kit, KitId};
+use crate::data::adapters::{RA_TOP, RTP, SSPII, CRTA};
+use crate::data::cdna_legacy::{SSP, VNP};
 use crate::data::{adapters::*, barcodes::*, legacy::*};
 
 pub const KITS: &[Kit] = &[
@@ -13,6 +15,24 @@ pub const KITS: &[Kit] = &[
         adapters_and_primers: &[LA_TOP, LA_BOTTOM],
         barcodes: &[],
     },
+
+
+// PCR‑cDNA Sequencing Kit (Kit 11)
+Kit{
+    id: KitId("PCS111"),
+    description: "PCR‑cDNA Sequencing Kit (SQK‑PCS111). Uses legacy SSP/VNP primers and RA; CRTA+RTP included.",
+    adapters_and_primers: &[RA_TOP, CRTA, RTP, SSP, VNP],
+    barcodes: &[],
+},
+
+// PCR‑cDNA Sequencing Kit V14
+Kit{
+    id: KitId("PCS114"),
+    description: "PCR‑cDNA Sequencing Kit V14 (SQK‑PCS114). Uses SSPII/RTP/CRTA and RA.",
+    adapters_and_primers: &[RA_TOP, CRTA, RTP, SSPII],
+    barcodes: &[],
+},
+
     Kit{
         id: KitId("LSK114-XL"),
         description: "Ligation Sequencing Kit V14 XL (LSK114-XL). LA adapter; typical with NBD114.x sets.",
