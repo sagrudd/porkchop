@@ -1,0 +1,18 @@
+[package]
+name = "porkchop"
+version = "0.1.2"
+edition = "2021"
+rust-version = "1.70"
+description = "Authoritative, well-documented reference of ONT adapters/primers/barcodes with kit mapping and inference."
+license = "MPL-2.0"
+readme = "README.md"
+repository = "https://example.com/porkchop"
+homepage = "https://example.com/porkchop"
+keywords = ["nanopore", "oxford nanopore", "ONT", "barcodes", "adapters"]
+categories = ["science", "bioinformatics"]
+
+[dependencies]
+# No optional features; everything is built-in.
+
+[dev-dependencies]
+# Add test-only dependencies here if needed.
