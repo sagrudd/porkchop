@@ -1,6 +1,12 @@
 # Changelog
 
 
+## 0.1.13 - 2025-10-21
+### Added
+- **PCB111.24** support (pychopper SSP/VNP + CRTA/RTP; PCB flanks; BP01–24).
+- Docs refreshed for PCB111/PCB114 and CLI examples.
+
+
 ## 0.1.11 - 2025-10-21
 ### Fixed
 - Restored `pub mod data { ... }` export in `lib.rs` so `crate::data::...` paths resolve.

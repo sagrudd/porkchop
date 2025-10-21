@@ -69,7 +69,16 @@ Kit{
     },
 
     // PCR‑cDNA barcoding (Kit 14)
-    Kit{
+    
+
+// PCR‑cDNA barcoding (Kit 11)
+Kit{
+    id: KitId("PCB111.24"),
+    description: "PCR‑cDNA Barcoding Kit 24 (Kit 11). Uses SSP/VNP (pychopper) with CRTA/RTP and PCB flanks; BP01–24.",
+    adapters_and_primers: &[RA_TOP, RTP, CRTA, SSP, VNP, PCB_FLANK_TOP, PCB_FLANK_BOT_A, PCB_FLANK_BOT_B],
+    barcodes: &SHARED_1_TO_24,
+},
+Kit{
         id: KitId("PCB114.24"),
         description: "PCR‑cDNA Barcoding Kit 24 V14. Uses cDNA adapters/primers + BP01–24; PCB flanks.",
         adapters_and_primers: &[RA_TOP, RTP, SSPII, CRTA, CPRM_FWD, CPRM_REV, PCB_FLANK_TOP, PCB_FLANK_BOT_A, PCB_FLANK_BOT_B],

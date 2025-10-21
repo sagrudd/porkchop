@@ -286,3 +286,22 @@ mod pcs_legacy_flag_tests {
         assert!(!kit_is_legacy(k), "PCS114 must not be marked legacy");
     }
 }
+
+
+#[cfg(test)]
+mod pcb_kit_tests {
+    use super::*;
+    #[test]
+    fn pcb111_has_ssp_vnp() {
+        let rows = kit_elements_rows_with_provenance("PCB111.24").unwrap();
+        let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
+        assert!(names.contains(&"SSP") && names.contains(&"VNP"));
+    }
+    #[test]
+    fn pcb114_uses_sspii_no_vnp() {
+        let rows = kit_elements_rows_with_provenance("PCB114.24").unwrap();
+        let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
+        assert!(names.contains(&"SSPII"));
+        assert!(!names.contains(&"VNP"));
+    }
+}

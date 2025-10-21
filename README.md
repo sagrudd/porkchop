@@ -123,3 +123,16 @@ Columns:
 `porkchop describe-kit PCS111` and `porkchop describe-kit PCS114` will list **all primers/adapters** with
 full **provenance** columns (`provenance_url`, `provenance_ref`). SSP/VNP rows cite the pychopper file;
 Kit 14 primers cite the Chemistry Technical Document Appendix 15.
+
+
+### PCB111 & PCB114 (PCR‑cDNA Barcoding) — pychopper primers
+
+- **PCB111.24 (Kit 11)** — includes *pychopper*-style primer tokens **SSP** and **VNP**, alongside `CRTA`/`RTP` and Rapid adapters; barcodes **BP01–24**.
+- **PCB114.24 (Kit 14)** — uses `SSPII`/`RTP`/`CRTA` (no VNP) with Rapid adapters; barcodes **BP01–24**.
+
+Use:
+```bash
+porkchop describe-kit PCB111.24
+porkchop describe-kit PCB114.24
+```
+You’ll see **complete, non‑truncated** tables with sequences and provenance (`provenance_url`, `provenance_ref`). SSP/VNP rows cite the pychopper primer FASTA; SSPII/RTP rows cite the Chemistry Technical Document (Appendix 15).
