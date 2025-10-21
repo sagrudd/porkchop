@@ -51,7 +51,6 @@ let ranking = porkchop::infer_kits_from_sequence("...AAGGTTAA" , 2);
 - **Porechop** forks (e.g. Sn0flingan/Poresnip `porechop/adapters.py`) for legacy adapter fragments (1D^2 / Y‑adapter trunks). We include only raw strings (no GPL code).
 - **qcat** (archived) used to cross‑check legacy kit naming/coverage.
 
-This project is **not affiliated** with Oxford Nanopore Technologies.
 
 ## MSRV
 Rust 1.70.
@@ -90,3 +89,20 @@ the table with minimal duplication.
 
 > **Note:** `porkchop list-kits` prints a **non‑truncated** full-width table by default
 > (all rows, full cell contents). Use `--csv` for machine-readable output.
+
+
+### `describe-kit`
+List all **primers**, **adapters**, and **barcodes** used by a specific kit, without truncation.
+
+```bash
+porkchop describe-kit LSK114
+porkchop describe-kit NBD114.24
+porkchop describe-kit RBK114.96 --csv > kit.csv
+```
+
+Columns:
+- `name`
+- `kind` (`adapter_top`, `adapter_bottom`, `primer`, `barcode`)
+- `sequence`
+- `provenance_url`
+- `provenance_ref`

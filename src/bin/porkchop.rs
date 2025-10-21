@@ -3,8 +3,8 @@
 Command-line interface for the **porkchop** crate.
 
 This binary is intentionally tiny and delegates logic to the library crate.
-It uses **clap** for subcommand parsing and **polars** to build a DataFrame, but
-prints a non-truncated, full-width table by default for readability.
+It uses **clap** for subcommand parsing and **polars** to build DataFrames,
+but prints non-truncated tables by default for readability.
 */
 
 use clap::{Parser, Subcommand, ArgAction};
@@ -27,13 +27,22 @@ enum Commands {
         /// Emit CSV instead of the full-width table.
         #[arg(long, action=ArgAction::SetTrue)]
         csv: bool,
-    }
+    },
+    /// Describe a specific kit: list all primers, adapters and barcodes for that kit.
+    DescribeKit {
+        /// Kit identifier (e.g., LSK114, NBD114.24, RBK114.96).
+        kit: String,
+        /// Emit CSV instead of the full-width table.
+        #[arg(long, action=ArgAction::SetTrue)]
+        csv: bool,
+    },
 }
 
 fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::ListKits { csv } => cmd_list_kits(csv)?,
+        Commands::DescribeKit { kit, csv } => cmd_describe_kit(&kit, csv)?,
     }
     Ok(())
 }
@@ -51,7 +60,7 @@ fn cmd_list_kits(as_csv: bool) -> PolarsResult<()> {
     let base_chem: Vec<String> = rows.iter().map(|r| match r.3 { BaseChemistry::Rapid => "rapid".to_string(), BaseChemistry::Ligation => "ligation".to_string() }).collect();
     let description: Vec<String> = rows.iter().map(|r| r.1.clone()).collect();
 
-    // Also expose as a DataFrame (for potential future operations) as requested.
+    // Also expose as a DataFrame (for potential future operations).
     let _df = df!(
         "kit_id" => kit_id.clone(),
         "legacy" => legacy.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
@@ -86,7 +95,7 @@ fn cmd_list_kits(as_csv: bool) -> PolarsResult<()> {
     let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
     for (ci, col) in cols.iter().enumerate() {
         for cell in col.iter() {
-            let w = cell.chars().count(); // character count (not perfect for grapheme clusters, but fine)
+            let w = cell.chars().count();
             if w > widths[ci] { widths[ci] = w; }
         }
     }
@@ -119,3 +128,85 @@ fn cmd_list_kits(as_csv: bool) -> PolarsResult<()> {
 
     Ok(())
 }
+
+/// Describe a kit by printing a table of all **primers**, **adapters**, and **barcodes**.
+/// The output is **not truncated**; every cell is printed in full.
+
+/// Describe a kit by printing a table of all **primers**, **adapters**, and **barcodes**,
+/// including **provenance URL** and **reference** columns. The output is **not truncated**.
+fn cmd_describe_kit(kit_id: &str, as_csv: bool) -> PolarsResult<()> {
+    let rows = porkchop::kit_elements_rows_with_provenance(kit_id)
+        .ok_or_else(|| PolarsError::NoData("unknown kit id".into()))?;
+
+    // Split columns
+    let name: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    let kind: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+    let sequence: Vec<&str> = rows.iter().map(|r| r.2.as_str()).collect();
+    let prov_url: Vec<&str> = rows.iter().map(|r| r.3.as_str()).collect();
+    let prov_ref: Vec<&str> = rows.iter().map(|r| r.4.as_str()).collect();
+
+    // DF (not required for printing, but kept for parity)
+    let _df = df!(
+        "name" => name.clone(),
+        "kind" => kind.clone(),
+        "sequence" => sequence.clone(),
+        "provenance_url" => prov_url.clone(),
+        "provenance_ref" => prov_ref.clone()
+    )?;
+
+    if as_csv {
+        let headers = ["name", "kind", "sequence", "provenance_url", "provenance_ref"];
+        println!("{}", headers.join(","));
+        for i in 0..rows.len() {
+            let row = [name[i], kind[i], sequence[i], prov_url[i], prov_ref[i]];
+            let mut out: Vec<String> = Vec::with_capacity(row.len());
+            for cell in row {
+                let mut v = cell.to_string();
+                if v.contains(',') || v.contains('\"') {
+                    v = format!("\"{}\"", v.replace('\"', "\"\""));
+                }
+                out.push(v);
+            }
+            println!("{}", out.join(","));
+        }
+        return Ok(());
+    }
+
+    // Non-truncated pretty table with provenance columns.
+    let headers = ["name", "kind", "sequence", "provenance_url", "provenance_ref"];
+    let cols: [&Vec<&str>; 5] = [&name, &kind, &sequence, &prov_url, &prov_ref];
+    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    for (ci, col) in cols.iter().enumerate() {
+        for cell in col.iter() {
+            let w = cell.chars().count();
+            if w > widths[ci] { widths[ci] = w; }
+        }
+    }
+    // header
+    let mut line = String::new();
+    for (i, h) in headers.iter().enumerate() {
+        if i > 0 { line.push_str(" | "); }
+        line.push_str(&format!("{:width$}", h, width = widths[i]));
+    }
+    println!("{}", line);
+    // sep
+    let mut sep = String::new();
+    for (i, _) in headers.iter().enumerate() {
+        if i > 0 { sep.push_str("-+-"); }
+        sep.push_str(&"-".repeat(widths[i]));
+    }
+    println!("{}", sep);
+    // rows
+    for r in 0..rows.len() {
+        let row = [name[r], kind[r], sequence[r], prov_url[r], prov_ref[r]];
+        let mut line = String::new();
+        for (i, cell) in row.iter().enumerate() {
+            if i > 0 { line.push_str(" | "); }
+            line.push_str(&format!("{:width$}", cell, width = widths[i]));
+        }
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
