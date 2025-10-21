@@ -95,7 +95,12 @@ Kit{
 
     // 16S barcoding (Kit 14)
     Kit{
-        id: KitId("16S114.24"),
+        id: 
+
+// Microbial Amplicon Barcoding (16S & ITS) — Rapid‑based, 24 barcodes
+// Provenance: ONT protocol page (SQK‑MAB114.24), Rapid workflow, up to 24 barcodes.
+
+KitId("16S114.24"),
         description: "16S Barcoding Kit 24 V14. Uses RA + 16S01–24 core barcodes; 16S primer flanks.",
         adapters_and_primers: &[RA_TOP, SIXTEENS_FLANK, SIXTEENS_FWD_TARGET, SIXTEENS_REV_TARGET],
         barcodes: &SHARED_1_TO_24,
@@ -148,4 +153,14 @@ Kit{
         adapters_and_primers: &[LSK308_1D2_TOP, LSK308_1D2_BOTTOM],
         barcodes: &[],
     },
+
+
+// Microbial Amplicon Barcoding (16S & ITS) — Rapid‑based, 24 barcodes
+// Provenance: ONT protocol page (SQK‑MAB114.24), Rapid workflow, up to 24 barcodes.
+Kit{
+    id: KitId("MAB114.24"),
+    description: "Microbial Amplicon Barcoding 24 V14 (SQK‑MAB114.24). Rapid‑based; 16S and ITS targets; 24 barcodes.",
+    adapters_and_primers: &[RA_TOP],
+    barcodes: &SHARED_1_TO_24,
+},
 ];

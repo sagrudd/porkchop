@@ -136,3 +136,10 @@ porkchop describe-kit PCB111.24
 porkchop describe-kit PCB114.24
 ```
 You’ll see **complete, non‑truncated** tables with sequences and provenance (`provenance_url`, `provenance_ref`). SSP/VNP rows cite the pychopper primer FASTA; SSPII/RTP rows cite the Chemistry Technical Document (Appendix 15).
+
+
+### MAB114 (Microbial Amplicon Barcoding 24 V14)
+
+- **MAB114.24 (SQK‑MAB114.24)** — Rapid‑based workflow for **16S** and **ITS** amplicons with **24 barcodes**.
+- `porkchop list-kits` includes MAB114; `porkchop describe-kit MAB114.24` prints Rapid adapter and **BP01–24** barcode sequences.
+- Primer oligo sequences for MAB114 are shipped with the kit; where not published in the CHTD appendices, they are omitted here and will be added when formally published by ONT.

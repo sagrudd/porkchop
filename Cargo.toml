@@ -1,6 +1,6 @@
 [package]
 name = "porkchop"
-version = "0.1.13"
+version = "0.1.15"
 edition = "2021"
 rust-version = "1.70"
 description = "Authoritative, well-documented reference of ONT adapters/primers/barcodes with kit mapping and inference."

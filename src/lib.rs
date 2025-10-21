@@ -305,3 +305,17 @@ mod pcb_kit_tests {
         assert!(!names.contains(&"VNP"));
     }
 }
+
+
+#[cfg(test)]
+mod mab114_tests {
+    use super::*;
+    #[test]
+    fn mab114_registered() {
+        let k = get_sequences_for_kit("MAB114.24").expect("MAB114.24 present");
+        // expect Rapid chemistry
+        assert!(matches!(base_chemistry_of(k), BaseChemistry::Rapid));
+        // expect barcodes (24 shared)
+        assert_eq!(k.barcodes.len(), 24);
+    }
+}

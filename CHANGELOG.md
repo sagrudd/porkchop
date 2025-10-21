@@ -1,6 +1,19 @@
 # Changelog
 
 
+## 0.1.15 - 2025-10-21
+### Fixed
+- Corrected `KITS` registry formatting for **MAB114.24** (malformed struct caused parse errors).
+
+
+## 0.1.14 - 2025-10-21
+### Added
+- **MAB114.24** kit (Rapid-based Microbial Amplicon Barcoding for 16S & ITS) using shared barcodes BP01–24; Rapid adapter listed.
+- CLI and docs updated: `list-kits` shows MAB114; `describe-kit MAB114.24` prints barcodes and adapter.
+### Note
+- Primer sequences for MAB114 (16S/ITS) will be added when available in the Chemistry Technical Document.
+
+
 ## 0.1.13 - 2025-10-21
 ### Added
 - **PCB111.24** support (pychopper SSP/VNP + CRTA/RTP; PCB flanks; BP01–24).
