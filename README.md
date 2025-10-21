@@ -3,7 +3,7 @@
 **Authoritative reference** of Oxford Nanopore adapters, primers and barcodes, mapped to kit identifiers, with a fuzzy matcher to infer kit-of-origin.
 
 - License: MPL-2.0
-- Version: 0.1.2
+- Version: 0.1.3
 - Stability: public API is additive within 0.1.x
 - No optional features: all functionality is enabled by default.
 
@@ -58,3 +58,35 @@ Rust 1.70.
 
 ## License
 MPL-2.0
+
+
+## CLI (binary)
+
+This crate ships a small CLI, `porkchop`, built with **clap**.
+
+### Install & run
+```bash
+# From the repo root:
+cargo run -- list-kits
+
+# After installing the binary:
+cargo install --path .
+porkchop list-kits
+porkchop list-kits --csv > kits.csv
+porkchop list-kits --markdown
+```
+
+### `list-kits`
+Builds a tiny **Polars** table of all supported kits with:
+- `kit_id`
+- `legacy` (bool)
+- `base_chemistry` ("rapid" or "ligation")
+- `description`
+
+The CLI is intentionally thin: it calls library functions
+[`list_supported_kits()`], [`kit_is_legacy()`] and [`base_chemistry_of()`] to assemble
+the table with minimal duplication.
+
+
+> **Note:** `porkchop list-kits` prints a **non‑truncated** full-width table by default
+> (all rows, full cell contents). Use `--csv` for machine-readable output.

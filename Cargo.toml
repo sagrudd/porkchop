@@ -1,6 +1,6 @@
 [package]
 name = "porkchop"
-version = "0.1.2"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.70"
 description = "Authoritative, well-documented reference of ONT adapters/primers/barcodes with kit mapping and inference."
@@ -12,6 +12,8 @@ keywords = ["nanopore", "oxford nanopore", "ONT", "barcodes", "adapters"]
 categories = ["science", "bioinformatics"]
 
 [dependencies]
+clap = { version = "4.5", features = ["derive"] }
+polars = { version = "0.42" }
 # No optional features; everything is built-in.
 
 [dev-dependencies]

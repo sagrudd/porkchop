@@ -37,6 +37,51 @@ pub mod kits;
 
 use kit::*;
 
+/// High-level classification for a kit's **base sequencing chemistry**.
+///
+/// This is intentionally coarse and only differentiates *ligation* vs *rapid* families.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BaseChemistry { Ligation, Rapid }
+
+/// Return `true` if the kit is considered **legacy** in this crate.
+///
+/// This is determined by well-known, superseded kit identifiers from historical workflows.
+/// The list is small and explicit to avoid false positives.
+///
+/// # Examples
+/// ```
+/// let l = porkchop::get_sequences_for_kit("LSK109").map(porkchop::kit_is_legacy).unwrap();
+/// assert!(l);
+/// ```
+pub fn kit_is_legacy(k: &crate::kit::Kit) -> bool {
+    matches!(k.id.0, "LSK108" | "LSK109" | "LSK308" | "RBK004" | "RBK110.96")
+}
+
+/// Infer the **base chemistry** for a kit by inspecting its adapters/primers.
+/// If the Rapid Adapter (RA) is present, the kit is treated as *Rapid*; otherwise *Ligation*.
+///
+/// # Examples
+/// ```
+/// let rapid = porkchop::get_sequences_for_kit("RBK114.24").map(porkchop::base_chemistry_of).unwrap();
+/// assert_eq!(rapid, porkchop::BaseChemistry::Rapid);
+/// let lig = porkchop::get_sequences_for_kit("LSK114").map(porkchop::base_chemistry_of).unwrap();
+/// assert_eq!(lig, porkchop::BaseChemistry::Ligation);
+/// ```
+pub fn base_chemistry_of(k: &crate::kit::Kit) -> BaseChemistry {
+    let is_rapid = k.adapters_and_primers.iter().any(|r| r.name.eq_ignore_ascii_case("RA_top") || r.name.eq_ignore_ascii_case("RAP_T"));
+    if is_rapid { BaseChemistry::Rapid } else { BaseChemistry::Ligation }
+}
+
+/// Convenience: return a vector of rows describing each kit (for CLI/UX).
+/// Each row is `(kit_id, description, legacy, base_chemistry)`.
+pub fn list_kits_rows() -> Vec<(String, String, bool, BaseChemistry)> {
+    list_supported_kits()
+        .iter()
+        .map(|k| (k.id.0.to_string(), k.description.to_string(), kit_is_legacy(k), base_chemistry_of(k)))
+        .collect()
+}
+
+
 /// Return the static registry of supported kits.
 pub fn list_supported_kits() -> &'static [crate::kit::Kit] { kits::KITS }
 

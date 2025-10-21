@@ -1,14 +1,18 @@
 # Changelog
 
-## 0.1.2 - 2025-10-21
-### Added
-- Comprehensive rustdoc for all modules, types and constants.
-- New `infer_kits_from_sequence` which aggregates per-element hits into a kit ranking.
+## 0.1.4 - 2025-10-21
 ### Changed
-- Populated adapters/primers/barcodes from ONT CHTD (Appendix 14–15) with explicit provenance.
-- Included legacy adapter fragments from Porechop forks with attribution.
-### Fixed
-- Harmonised flanking sequences across kit definitions.
+- CLI `porkchop list-kits` now prints a **non-truncated** full-width table by default.
+- `--csv` flag continues to emit complete, machine-readable CSV.
+
+## 0.1.3 - 2025-10-21
+- New CLI binary `porkchop list-kits` with Polars; library helpers for classification.
+- Unit tests for classification and registry consistency.
+
+## 0.1.2 - 2025-10-21
+- Extensive rustdoc and full ONT kit/sequence registry with provenance.
+- Legacy adapter fragments included with attribution.
+- Fuzzy matching utilities and kit inference helpers.
 
 ## 0.1.1 - 2025-10-21
 - Pre-release: removed feature flags; initial kit mapping & data layout.
