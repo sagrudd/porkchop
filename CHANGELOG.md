@@ -1,6 +1,18 @@
 # Changelog
 
 
+## 0.1.20 - 2025-10-21
+### Fixed
+- Eliminated `threads` unused-variable warning by explicitly deriving pool size and passing to `with_threadpool` in FASTQ path.
+
+
+## 0.1.19 - 2025-10-21
+### Fixed
+- Respect `--threads` in `seqio` by running scoped tasks inside a sized rayon pool (no unused warning).
+- CLI: import `rayon::prelude::*` and use the record count returned from `for_each_parallel` per file.
+- Ensured archive version and `Cargo.toml` match: 0.1.19.
+
+
 ## 0.1.15 - 2025-10-21
 ### Fixed
 - Corrected `KITS` registry formatting for **MAB114.24** (malformed struct caused parse errors).

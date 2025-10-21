@@ -9,6 +9,7 @@ but prints non-truncated tables by default for readability.
 
 use clap::{Parser, Subcommand, ArgAction};
 use polars::prelude::*;
+use rayon::prelude::*;
 use porkchop::{self, BaseChemistry};
 
 /// Main CLI entrypoint for `porkchop` utilities.
@@ -22,6 +23,18 @@ struct Cli {
 /// Available subcommands.
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Sequence IO utilities (FASTQ/SAM/BAM)
+    Reads {
+        /// Count records in one or more input files (FASTQ/FASTQ.GZ/SAM/BAM)
+        #[arg(long, action=clap::ArgAction::SetTrue)]
+        count: bool,
+        /// Input files (one or more)
+        #[arg(required=true)]
+        files: Vec<String>,
+        /// Number of threads (defaults to all logical cores)
+        #[arg(long)]
+        threads: Option<usize>,
+    },
     /// List all supported kits in a table (no truncation).
     ListKits {
         /// Emit CSV instead of the full-width table.
@@ -41,6 +54,13 @@ enum Commands {
 fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
     match cli.command {
+    Commands::Reads { count, files, threads } => {
+        if count {
+            return cmd_reads_count(&files, threads);
+        } else {
+            eprintln!("Specify a reads subcommand (e.g., --count).");
+        }
+    },
         Commands::ListKits { csv } => cmd_list_kits(csv)?,
         Commands::DescribeKit { kit, csv } => cmd_describe_kit(&kit, csv)?,
     }
@@ -207,6 +227,27 @@ fn cmd_describe_kit(kit_id: &str, as_csv: bool) -> PolarsResult<()> {
         println!("{}", line);
     }
 
+    Ok(())
+}
+
+
+/// Count reads across input files in parallel; prints per-file and total counts.
+
+fn cmd_reads_count(files: &Vec<String>, threads: Option<usize>) -> polars::prelude::PolarsResult<()> {
+    use porkchop::seqio;
+    let results: Vec<(String, usize)> = files.par_iter().map(|p| {
+        match seqio::for_each_parallel(p, threads, |_r| {}) {
+            Ok((_fmt, n)) => (p.clone(), n),
+            Err(_) => (p.clone(), 0),
+        }
+    }).collect();
+
+    let mut total = 0usize;
+    for (p, n) in &results {
+        println!("{}	{}", p, n);
+        total += *n;
+    }
+    println!("TOTAL	{}", total);
     Ok(())
 }
 

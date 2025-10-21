@@ -143,3 +143,28 @@ You’ll see **complete, non‑truncated** tables with sequences and provenance 
 - **MAB114.24 (SQK‑MAB114.24)** — Rapid‑based workflow for **16S** and **ITS** amplicons with **24 barcodes**.
 - `porkchop list-kits` includes MAB114; `porkchop describe-kit MAB114.24` prints Rapid adapter and **BP01–24** barcode sequences.
 - Primer oligo sequences for MAB114 are shipped with the kit; where not published in the CHTD appendices, they are omitted here and will be added when formally published by ONT.
+
+## High‑performance sequence I/O (FASTQ/SAM/BAM)
+
+- FASTQ/FASTQ.GZ via `needletail`
+- SAM/BAM via `rust-htslib`
+- Multithreading: `rayon` threadpool (defaults to all logical cores); BAM enables htslib BGZF threads when possible.
+- CLI integrated via `clap`.
+
+### Examples
+```bash
+# Count reads across multiple inputs using all cores by default
+porkchop reads --count foo.fastq.gz bar.bam
+
+# Limit threads (e.g., 8)
+porkchop reads --count --threads 8 foo.fastq.gz bar.bam
+```
+
+### Library
+```rust
+use porkchop::seqio::{for_each_parallel, NARead};
+let (_, n) = for_each_parallel("reads.fastq.gz", None, |r: NARead| {
+    // Your per-read work here
+}).unwrap();
+println!("processed {n} reads");
+```

@@ -30,6 +30,7 @@
 //! ## Version
 //! This build is "0.1.2" ("2025-10-21").
 
+pub mod benchmark;
 pub mod kit;
 pub mod detect;
 pub mod kits;
@@ -319,3 +320,5 @@ mod mab114_tests {
         assert_eq!(k.barcodes.len(), 24);
     }
 }
+
+pub mod seqio;

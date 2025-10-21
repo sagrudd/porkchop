@@ -1,8 +1,8 @@
 [package]
 name = "porkchop"
-version = "0.1.15"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.90"
 description = "Authoritative, well-documented reference of ONT adapters/primers/barcodes with kit mapping and inference."
 license = "MPL-2.0"
 readme = "README.md"
@@ -12,8 +12,24 @@ keywords = ["nanopore", "oxford nanopore", "ONT", "barcodes", "adapters"]
 categories = ["science", "bioinformatics"]
 
 [dependencies]
+anyhow = "1"
+rust-htslib = "0.46"
+needletail = "0.5"
+rayon = "1.10"
+num_cpus = "1.16"
+tokio = { version = "1.39", features = ["rt-multi-thread"] }
+
 clap = { version = "4.5", features = ["derive"] }
 polars = { version = "0.42" }
+
+aho-corasick = "1"
+bio = "1"
+parasailors = "0.3.1"
+edlib_rs = "0.1.2"
+csv = "1"
+# sysinfo already present in the crate for CPU sampling; add if missing
+sysinfo = "0.30"
+
 # No optional features; everything is built-in.
 
 [dev-dependencies]
