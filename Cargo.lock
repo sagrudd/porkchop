@@ -639,21 +639,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "curl-sys"
-version = "0.4.83+curl-8.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5830daf304027db10c82632a464879d46a3f7c4ba17a31592657ad16c719b483"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "openssl-sys",
- "pkg-config",
- "vcpkg",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "custom_derive"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -968,12 +953,11 @@ checksum = "e38d7f1c121cd22aa214cb4dadd4277dc5447391eac518b899b29ba6356fbbb2"
 dependencies = [
  "bzip2-sys",
  "cc",
- "curl-sys",
  "fs-utils",
  "glob",
+ "libdeflate-sys",
  "libz-sys",
  "lzma-sys",
- "openssl-sys",
 ]
 
 [[package]]
@@ -1205,6 +1189,15 @@ name = "libc"
 version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
+
+[[package]]
+name = "libdeflate-sys"
+version = "1.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "805824325366c44599dfeb62850fe3c7d7b3e3d75f9ab46785bc7dba3676815c"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "libloading"
@@ -1538,53 +1531,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
-name = "openssl-src"
-version = "300.5.4+3.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a507b3792995dae9b0df8a1c1e3771e8418b7c2d9f0baeba32e6fe8b06c7cb72"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "openssl-sys"
-version = "0.9.110"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a9f0075ba3c21b09f8e8b2026584b1d18d49388648f2fbbf3c97ea8deced8e2"
-dependencies = [
- "cc",
- "libc",
- "openssl-src",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
 name = "ordered-float"
 version = "3.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1e1c390732d15f1d48471625cd92d154e66db2c56645e29a9cd26f4699f72dc"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "parasail-sys"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c9968cf65a9bd79a05d3134685ba5b47e896ec3921c3149afff3ab69ae3ce94"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "parasailors"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fc4de8ac840bdcfdf7f61799e4cf01ea9644b80912b3598b409099c3fc72163"
-dependencies = [
- "libc",
- "parasail-sys",
 ]
 
 [[package]]
@@ -1692,12 +1644,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pin-project-lite"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
-
-[[package]]
 name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1724,10 +1670,8 @@ dependencies = [
  "polars-error",
  "polars-io",
  "polars-lazy",
- "polars-ops",
  "polars-parquet",
  "polars-sql",
- "polars-time",
  "polars-utils",
  "version_check",
 ]
@@ -1866,7 +1810,6 @@ dependencies = [
  "ahash",
  "atoi_simd",
  "bytes",
- "chrono",
  "fast-float",
  "glob",
  "home",
@@ -1879,7 +1822,6 @@ dependencies = [
  "polars-arrow",
  "polars-core",
  "polars-error",
- "polars-time",
  "polars-utils",
  "rayon",
  "regex",
@@ -2117,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "porkchop"
-version = "0.2.0"
+version = "0.2.6"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2127,12 +2069,10 @@ dependencies = [
  "edlib_rs",
  "needletail 0.5.1",
  "num_cpus",
- "parasailors",
  "polars",
  "rayon",
  "rust-htslib",
  "sysinfo 0.30.13",
- "tokio",
 ]
 
 [[package]]
@@ -2742,15 +2682,6 @@ checksum = "5d4f6d1145dcb577acf783d4e601bc1d76a13337bb54e6233add580b07344c8b"
 dependencies = [
  "displaydoc",
  "zerovec",
-]
-
-[[package]]
-name = "tokio"
-version = "1.48.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff360e02eab121e0bc37a2d3b4d4dc622e6eda3a8e5253d5435ecf5bd4c68408"
-dependencies = [
- "pin-project-lite",
 ]
 
 [[package]]

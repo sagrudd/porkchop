@@ -1,62 +1,34 @@
 # Changelog
 
+## 0.2.1 - 2025-10-22
+- Patch release: preserves 0.2.0 benchmark framework and CLI.
+- Merge-ready hooks for upstream kit registry (this archive includes placeholder kits so it compiles).
 
-## 0.1.20 - 2025-10-21
+## 0.2.0 - 2025-10-22
+- Added benchmark command and framework (Aho-Corasick, Myers, Edlib, Parasail, AC two-stage).
+- High-performance IO for FASTQ/FASTQ.GZ/SAM/BAM.
+
+
+## 0.2.2 - 2025-10-22
+### Improved
+- **Benchmark performance:** prebuilt Myers automata and Parasail profiles (per‑run) to cut per‑read setup costs.
+- **Docs:** expanded crate/module/CLI documentation; added MSRV section and tuning tips.
+- **MSRV:** declare `rust-version = "1.90"` in `Cargo.toml`.
+
+### Maintained
+- Preserved v0.2.1 APIs and CLI behavior.
+
+
+## 0.2.3 - 2025-10-22
 ### Fixed
-- Eliminated `threads` unused-variable warning by explicitly deriving pool size and passing to `with_threadpool` in FASTQ path.
+- Set `edlib_rs = "0.1.2"` and adapted `benchmark` to use `edlibrs::edlibAlignRs` API (HW mode, distance task).
 
 
-## 0.1.19 - 2025-10-21
+## 0.2.4 - 2025-10-22
 ### Fixed
-- Respect `--threads` in `seqio` by running scoped tasks inside a sized rayon pool (no unused warning).
-- CLI: import `rayon::prelude::*` and use the record count returned from `for_each_parallel` per file.
-- Ensured archive version and `Cargo.toml` match: 0.1.19.
+- Pin `parasailors = "0.3.1"` to match crates.io availability; no source changes required (API compatible with our usage).
 
 
-## 0.1.15 - 2025-10-21
+## 0.2.5 - 2025-10-22
 ### Fixed
-- Corrected `KITS` registry formatting for **MAB114.24** (malformed struct caused parse errors).
-
-
-## 0.1.14 - 2025-10-21
-### Added
-- **MAB114.24** kit (Rapid-based Microbial Amplicon Barcoding for 16S & ITS) using shared barcodes BP01–24; Rapid adapter listed.
-- CLI and docs updated: `list-kits` shows MAB114; `describe-kit MAB114.24` prints barcodes and adapter.
-### Note
-- Primer sequences for MAB114 (16S/ITS) will be added when available in the Chemistry Technical Document.
-
-
-## 0.1.13 - 2025-10-21
-### Added
-- **PCB111.24** support (pychopper SSP/VNP + CRTA/RTP; PCB flanks; BP01–24).
-- Docs refreshed for PCB111/PCB114 and CLI examples.
-
-
-## 0.1.11 - 2025-10-21
-### Fixed
-- Restored `pub mod data { ... }` export in `lib.rs` so `crate::data::...` paths resolve.
-- Removed accidental inline primer definitions from `lib.rs` (now properly in `data::cdna_legacy`).
-- Rewrote `data/cdna_legacy.rs` to a complete, compile-ready module (no placeholders), with full `Provenance` fields.
-
-
-## 0.1.10 - 2025-10-21
-### Fixed
-- Resolved duplicate `pub mod data` declaration causing E0428.
-- Completed `Provenance` fields for SSP/VNP (added `source`) to fix E0063.
-
-
-## 0.1.9 - 2025-10-21
-### Fixed
-- Clarified that **PCS114** is **not legacy**; added a unit test to assert the legacy flag is false.
-
-## 0.1.8 - 2025-10-21
-### Added
-- New kits: **PCS111** and **PCS114** (PCR‑cDNA Sequencing, Kit 11 & Kit 14).
-- Legacy cDNA primers: **SSP** and **VNP** (from epi2me‑labs/pychopper), exposed with full provenance.
-- `describe-kit` now reports SSP/VNP for PCS111; PCS114 lists SSPII/RTP/CRTA per CHTD.
-
-### Notes
-- Base chemistry classification reports these kits as *rapid* (Rapid adapters used post‑PCR).
-
-## 0.1.7 - 2025-10-21
-- README affiliation fix.
+- Removed invalid `hts-sys` feature from `rust-htslib` (using only valid features: `bzip2`, `lzma`, `libdeflate`).
