@@ -1,3 +1,37 @@
+
+## [0.2.36] - 2025-10-23
+- CLI: avoid moving `truth_map` by using `truth_map.clone()` per iteration.
+- CLI: prefix `input_format` with underscore to silence unused warning.
+- CLI: make the DataFrame binding mutable for `CsvWriter::finish(&mut df)`.
+
+
+## [0.2.35] - 2025-10-23
+- Add `BenchmarkAlgo::as_str()` and `Display` impl to support `algo.as_str()` usage in CLI output.
+
+
+## [0.2.34] - 2025-10-23
+- Remove line 54 from `src/benchmark.rs` (previous content: `}`).
+
+
+## [0.2.33] - 2025-10-23
+- Restore `enum BenchmarkAlgo` block in `src/benchmark.rs` (previously corrupted line removed).
+- Keep `impl BenchmarkAlgo::from_list(&str)` and `benchmark_file(..., max_dist)` adjustments.
+
+
+## [0.2.32] - 2025-10-23
+- Fix CLI benchmark invocation: add `BenchmarkAlgo::from_list`, pass `&Kit` not `&&str`.
+- Thread `max_dist` through `benchmark::benchmark_file` and remove hard-coded threshold.
+- Minor: drop unnecessary `mut` on CSV writer.
+
+## [0.2.31] - 2025-10-23
+- Hotfix: repair corrupted `version` line in `Cargo.toml`; ensure README sync.
+
+## [0.2.29] - 2025-10-23
+- Add CI for MSRV + stable
+- Add rust-toolchain.toml (stable + rustfmt + clippy)
+- Add Makefile helper targets
+- Sync README **Version**
+
 # Changelog
 
 ## 0.2.1 - 2025-10-22

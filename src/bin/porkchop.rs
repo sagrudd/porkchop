@@ -72,7 +72,7 @@ fn cmd_list_kits() -> polars::prelude::PolarsResult<()> {
         porkchop::BaseChemistry::Amplicon => "Amplicon",
     }).collect();
 
-    let df = df!(
+    let mut df = df!(
         "kit" => ids,
         "description" => desc,
         "legacy" => legacy,
@@ -115,7 +115,7 @@ fn cmd_describe(kit: &str, as_csv: bool) -> polars::prelude::PolarsResult<()> {
     )?;
 
     if as_csv {
-        let mut w = CsvWriter::new(std::io::stdout());
+        let w = CsvWriter::new(std::io::stdout());
         w.include_header(true).finish(&mut df)?;
     } else {
         print_table(&df);
@@ -134,19 +134,23 @@ fn cmd_benchmark(
 ) -> polars::prelude::PolarsResult<()> {
     use porkchop::benchmark::{self, BenchmarkAlgo};
 
+    let kit_ref = match porkchop::get_sequences_for_kit(kit) {
+        Some(k) => k,
+        None => return Err(PolarsError::ComputeError(format!("Unknown kit: {}", kit).into())),
+    };
     let truth_map = match truth { Some(p) => benchmark::load_truth(p).ok(), None => None };
     let algos = BenchmarkAlgo::from_list(algorithms);
 
     let mut rows: Vec<(String,String,u64,u64,u64,u128,usize,f32,usize)> = Vec::new();
     for file in files {
         for algo in &algos {
-            let (tp, fp, fn_, dur, nseq, cpu, input_format) = benchmark::benchmark_file(file, &kit, *algo, truth_map.map(|m| m.clone()), threads, max_dist)
+            let (tp, fp, fn_, dur, nseq, cpu, _input_format) = benchmark::benchmark_file(file, kit_ref, *algo, truth_map.clone(), threads, max_dist)
                 .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
             rows.push((file.clone(), algo.as_str().to_string(), tp, fp, fn_, dur.as_millis(), nseq, cpu, threads.unwrap_or_else(num_cpus::get)));
         }
     }
 
-    let df = df!(
+    let mut df = df!(
         "file" => rows.iter().map(|r| r.0.as_str()).collect::<Vec<&str>>(),
         "algorithm" => rows.iter().map(|r| r.1.as_str()).collect::<Vec<&str>>(),
         "tp" => rows.iter().map(|r| r.2).collect::<Vec<u64>>(),
@@ -167,7 +171,7 @@ fn cmd_benchmark(
     )?;
 
     if as_csv {
-        let mut w = CsvWriter::new(std::io::stdout());
+        let w = CsvWriter::new(std::io::stdout());
         w.include_header(true).finish(&mut df)?;
     } else {
         print_table(&df);

@@ -36,6 +36,31 @@ pub enum BenchmarkAlgo {
     Edlib,
     Parasail,
 }
+impl BenchmarkAlgo {
+    /// Return a stable lowercase name for display/CSV.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BenchmarkAlgo::Myers => "myers",
+            BenchmarkAlgo::ACMyers => "acmyers",
+            BenchmarkAlgo::Edlib => "edlib",
+            BenchmarkAlgo::Parasail => "parasail",
+        }
+    }
+
+    /// Parse a comma-separated list of algorithms into a Vec<BenchmarkAlgo>.
+    /// Unknown names are ignored with a warning.
+    pub fn from_list(s: &str) -> Vec<BenchmarkAlgo> {
+        let mut v = Vec::new();
+        for t in s.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()) {
+            match t.parse::<BenchmarkAlgo>() {
+                Ok(a) => v.push(a),
+                Err(_) => eprintln!("Warning: unknown algorithm '{}'; skipping", t),
+            }
+        }
+        v
+    }
+}
+
 
 impl std::str::FromStr for BenchmarkAlgo {
     type Err = String;
@@ -201,6 +226,7 @@ pub fn benchmark_file<P: AsRef<Path>>(
     algo: BenchmarkAlgo,
     truth: Option<HashMap<String, String>>,
     threads: Option<usize>,
+    max_dist: usize,
 ) -> anyhow::Result<(u64, u64, u64, Duration, usize, f32, seqio::InputFormat)> {
     let start = Instant::now();
 
@@ -231,14 +257,14 @@ let fmt_n = seqio::for_each_parallel(path.as_ref(), threads, move |rec: seqio::N
 
         let records = records_arc.as_slice();
         let label = match algo {
-            BenchmarkAlgo::Myers => myers_best(&rec.seq, records, 24),
+            BenchmarkAlgo::Myers => myers_best(&rec.seq, records, max_dist),
             BenchmarkAlgo::ACMyers => {
                 // Rebuild a minimal pre each call (safe if `pre` is None),
                 // otherwise use the computed AC.
                 let local_pre = if let Some(ref pr) = pre { Some(pr) } else { None };
-                if let Some(pr) = local_pre { ac_myers_best(&rec.seq, pr, 24) } else { myers_best(&rec.seq, records, 24) }
+                if let Some(pr) = local_pre { ac_myers_best(&rec.seq, pr, max_dist) } else { myers_best(&rec.seq, records, max_dist) }
             }
-            BenchmarkAlgo::Edlib => edlib_best(&rec.seq, records, 24),
+            BenchmarkAlgo::Edlib => edlib_best(&rec.seq, records, max_dist),
             BenchmarkAlgo::Parasail => parasail_best(&rec.seq, records),
         };
 
@@ -270,3 +296,9 @@ let fmt_n = seqio::for_each_parallel(path.as_ref(), threads, move |rec: seqio::N
 
     Ok((tp_v, fp_v, fn_v, elapsed, nseq_v, cpu_util, fmt_n.0))
 }    // Own a copy of the static records so the closure can capture without borrowing `kit`.
+
+impl std::fmt::Display for BenchmarkAlgo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
