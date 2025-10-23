@@ -1,4 +1,8 @@
 
+## [0.2.37] - 2025-10-23
+- Remove unnecessary `mut` on DataFrame bindings where CSV writing isn't used (silences `unused_mut` warning).
+
+
 ## [0.2.36] - 2025-10-23
 - CLI: avoid moving `truth_map` by using `truth_map.clone()` per iteration.
 - CLI: prefix `input_format` with underscore to silence unused warning.
