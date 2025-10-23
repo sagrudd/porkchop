@@ -1,8 +1,8 @@
 
 [package]
-rust-version = "1.90"
+rust-version = "1.82"
 name = "porkchop"
-version = "0.2.6"
+version = "0.2.29"
 edition = "2021"
 license = "MPL-2.0"
 description = "Authoritative ONT adapters/primers/barcodes + high-performance IO + benchmarking"

@@ -29,7 +29,7 @@ pub fn list_supported_kits() -> &'static [kit::Kit] { kits::KITS }
 
 /// Lookup a kit by id (case-sensitive).
 pub fn get_sequences_for_kit(id: &str) -> Option<&'static kit::Kit> {
-    kits::KITS.iter().find(|k| k.id.0 == id).copied()
+    kits::KITS.iter().find(|k| k.id.0 == id)
 }
 
 /// Is a kit legacy?

@@ -1,277 +1,272 @@
-
-//! Benchmarking framework for adapter/primer/barcode assignment.
+//! Benchmark framework for porkchop.
 //!
-//! Algorithms: Aho-Corasick, Myers, Edlib, Parasail, plus two-stage AC+{Myers,Parasail}.
-//! Truth set CSV: read_id, expected_labels (;-separated), [kind].
+//! This module benchmarks adapter/primer/barcode assignment performance
+//! using several alternative classifiers. It is intentionally simple,
+//! dependency-light and portable, so it builds on common developer hosts.
+//!
+//! Algorithms implemented:
+//! - `Myers` (edit distance with k threshold, bio crate)
+//! - `ACMyers` (Aho–Corasick prefilter + per-candidate Myers)
+//! - `Edlib` (C FFI via edlib_rs bindings, distance-only, semiglobal)
+//! - `Parasail` (placeholder; returns None to keep build portable)
+//!
+//! The benchmarking entrypoint is [`benchmark_file`].
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, atomic::{AtomicU64, AtomicUsize, Ordering}};
 use std::time::{Duration, Instant};
+use std::sync::{Arc};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
+use std::collections::HashMap;
 
-use anyhow::Result;
-use aho_corasick::AhoCorasick;
-use bio::pattern_matching::myers::MyersBuilder;
-use bio::alignment::pairwise::Aligner;
-use csv;
-use edlib_rs::edlibrs::{edlibAlignRs, edlibDefaultAlignConfig, EdlibAlignMode_EDLIB_MODE_HW, EdlibAlignTask_EDLIB_TASK_DISTANCE};
-use sysinfo::{System, RefreshKind, CpuRefreshKind};
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, AhoCorasickKind};
+use bio::pattern_matching::myers::{Myers, MyersBuilder};
+use edlib_rs::edlibrs::{
+    edlibAlign, edlibDefaultAlignConfig, edlibFreeAlignResult,
+    EdlibAlignConfig, EdlibAlignMode_EDLIB_MODE_HW, EdlibAlignTask_EDLIB_TASK_DISTANCE,
+};
 
-use crate::kit::{SequenceRecord, SeqKind};
-use crate::seqio::{self, NARead};
+use crate::kit::{SequenceRecord, SeqKind, Kit};
+use crate::seqio;
 
-         // Prebuilt search objects for faster per-read classification
-         struct Prebuilt<'a> {
-             records: &'a [SequenceRecord],
-             myers: Vec<bio::pattern_matching::myers::Myers<u64>>,
-         }
-         impl<'a> Prebuilt<'a> {
-                fn build(records: &'a [SequenceRecord]) -> Self {
-                         let myers = records.iter()
-                             .map(|r| bio::pattern_matching::myers::MyersBuilder::new().build_64(&r.sequence.as_bytes()))
-                             .collect();
-                         Self { records, myers }
-                     }
-         }
+/// Algorithms available to the benchmark.
+#[derive(Clone, Copy, Debug)]
+pub enum BenchmarkAlgo {
+    Myers,
+    ACMyers,
+    Edlib,
+    Parasail,
+}
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Algorithm { AhoCorasick, Myers, Edlib, Parasail, TwoStageACMyers, TwoStageACParasail }
-impl Algorithm {
-    pub fn all() -> Vec<Algorithm> { vec![Self::AhoCorasick, Self::Myers, Self::Edlib, Self::Parasail, Self::TwoStageACMyers, Self::TwoStageACParasail] }
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::AhoCorasick => "aho",
-            Self::Myers => "myers",
-            Self::Edlib => "edlib",
-            Self::Parasail => "parasail",
-            Self::TwoStageACMyers => "ac+myers",
-            Self::TwoStageACParasail => "ac+parasail",
+impl std::str::FromStr for BenchmarkAlgo {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "myers" => Ok(Self::Myers),
+            "acmyers" | "ac-myers" | "aho-myers" => Ok(Self::ACMyers),
+            "edlib" => Ok(Self::Edlib),
+            "parasail" => Ok(Self::Parasail),
+            other => Err(format!("Unknown algorithm: {}", other)),
         }
     }
-    pub fn parse_list(s: &str) -> Vec<Algorithm> {
-        let mut v = Vec::new();
-        for tok in s.split(',').map(|t| t.trim().to_lowercase()) {
-            let a = match tok.as_str() {
-                "aho" | "ac" => Some(Self::AhoCorasick),
-                "myers" => Some(Self::Myers),
-                "edlib" => Some(Self::Edlib),
-                "parasail" | "sw" => Some(Self::Parasail),
-                "ac+myers" => Some(Self::TwoStageACMyers),
-                "ac+parasail" => Some(Self::TwoStageACParasail),
-                "" => None,
-                _ => None,
-            };
-            if let Some(a) = a { v.push(a); }
+}
+
+/// A single top hit label from a classifier.
+#[derive(Clone, Debug)]
+pub struct LabelHit {
+    /// Name/identifier of the matched sequence (e.g., "NB01", "RA-top").
+    pub name: String,
+    /// Kind/category of the sequence (adapter / primer / barcode).
+    pub kind: SeqKind,
+    /// A score where **larger is better**. We use negative edit distance for
+    /// distance-based classifiers (e.g. `-dist`).
+    pub score: i32,
+    /// Optional end position of the match in the read.
+    pub pos: Option<usize>,
+}
+
+/// Prebuilt state shared across many classifications (optional).
+///
+/// We keep this lightweight; only AC is immutable and free to share
+/// across threads. We build Myers per-candidate to avoid interior mutability.
+pub struct Prebuilt<'a> {
+    pub records: &'a [SequenceRecord],
+    pub ac: AhoCorasick,
+}
+
+/// Build an `AhoCorasick` automaton across all kit motifs.
+pub fn prebuild_for<'a>(records: &'a [SequenceRecord]) -> Prebuilt<'a> {
+    let patterns = records.iter().map(|r| r.sequence.as_bytes());
+    let ac = AhoCorasickBuilder::new()
+        .kind(Some(AhoCorasickKind::DFA)) // prefer DFA for short motifs
+        .build(patterns)
+        .expect("failed to build Aho-Corasick automaton");
+    Prebuilt { records, ac }
+}
+
+/// Return the best label according to the requested algorithm.
+pub fn classify_best(
+    algo: BenchmarkAlgo,
+    seq: &[u8],
+    records: &[SequenceRecord],
+    max_dist: usize,
+) -> Option<LabelHit> {
+    match algo {
+        BenchmarkAlgo::Myers => myers_best(seq, records, max_dist),
+        BenchmarkAlgo::ACMyers => {
+            let pre = prebuild_for(records);
+            ac_myers_best(seq, &pre, max_dist)
         }
-        if v.is_empty() { Self::all() } else { v }
+        BenchmarkAlgo::Edlib => edlib_best(seq, records, max_dist),
+        BenchmarkAlgo::Parasail => parasail_best(seq, records),
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LabelHit { pub name: String, pub kind: SeqKind, pub score: i32, pub pos: Option<(usize,usize)> }
-
-#[derive(Debug, Clone)]
-pub struct Truth { pub expected: HashSet<String>, pub kind: Option<SeqKind> }
-
-pub fn load_truth(path: &str) -> Result<HashMap<String, Truth>> {
-    let mut out = HashMap::new();
-    let mut rdr = csv::ReaderBuilder::new().has_headers(true).flexible(true).from_path(path)?;
-    for rec in rdr.records() {
-        let r = rec?;
-        let id = r.get(0).unwrap_or("").to_string();
-        let labels = r.get(1).unwrap_or("").split(';').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect::<HashSet<_>>();
-        let kind = match r.get(2).map(|s| s.to_lowercase()) {
-            Some(k) if k == "adapter" => Some(SeqKind::AdapterTop),
-            Some(k) if k == "primer"  => Some(SeqKind::Primer),
-            Some(k) if k == "barcode" => Some(SeqKind::Barcode),
-            _ => None,
-        };
-        out.insert(id, Truth { expected: labels, kind });
-    }
-    Ok(out)
-}
-
-fn patterns_for_kit(kit_id: &str) -> Result<Vec<SequenceRecord>> {
-    let kit = crate::get_sequences_for_kit(kit_id).ok_or_else(|| anyhow::anyhow!("Unknown kit id {}", kit_id))?;
-    let mut v = Vec::new();
-    for r in kit.adapters_and_primers.iter() {
-        if matches!(r.kind, SeqKind::AdapterTop | SeqKind::AdapterBottom | SeqKind::Primer) { v.push(*r); }
-    }
-    for r in kit.barcodes.iter() { v.push(*r); }
-    Ok(v)
-}
-
-fn ac_index(records: &[SequenceRecord]) -> AhoCorasick {
-    let pats: Vec<&[u8]> = records.iter().map(|r| r.sequence.as_bytes()).collect();
-    AhoCorasick::new(pats).expect("AC build")
-}
-
+/// Pure Myers (build per-record).
 fn myers_best(seq: &[u8], records: &[SequenceRecord], max_dist: usize) -> Option<LabelHit> {
     let mut best: Option<LabelHit> = None;
     for r in records {
-        let m = MyersBuilder::new().build_64(&r.sequence.as_bytes());
-        if let Some(end) = m.find_all_end(seq, max_dist).next() {
-            let dist = end.1 as i32;
-            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score: dist, pos: None };
-            if best.as_ref().map(|b| dist < b.score).unwrap_or(true) { best = Some(hit); }
+        let mut m: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
+        if let Some((_, end, dist)) = m.find_all(seq, max_dist as u8).next() {
+            let score = -(dist as i32);
+            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: Some(end) };
+            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) {
+                best = Some(hit);
+            }
         }
     }
     best
 }
 
-fn parasail_best(seq: &[u8], records: &[SequenceRecord]) -> Option<LabelHit> { sw_best(seq, records) }
-
-fn sw_best(seq: &[u8], records: &[SequenceRecord]) -> Option<LabelHit> {
+/// Aho–Corasick prefilter then Myers per-candidate.
+fn ac_myers_best(seq: &[u8], pre: &Prebuilt, max_dist: usize) -> Option<LabelHit> {
     let mut best: Option<LabelHit> = None;
-    let mut aligner = Aligner::new(-5, -1, |a: u8, b: u8| if a == b { 2 } else { -1 });
-    for r in records {
-        let score = aligner.local(r.sequence.as_bytes(), seq).score;
-        let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: None };
-        if best.as_ref().map(|b| score > b.score).unwrap_or(true) { best = Some(hit); }
+    // De-duplicate pattern IDs we’ll verify with Myers.
+    let mut seen = std::collections::HashSet::new();
+    for m in pre.ac.find_iter(seq) {
+        let pid = m.pattern();
+        if !seen.insert(pid) { continue; }
+        let r = &pre.records[pid];
+        let mut my: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
+        if let Some((_, end, dist)) = my.find_all(seq, max_dist as u8).next() {
+            let score = -(dist as i32);
+            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: Some(end) };
+            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) {
+                best = Some(hit);
+            }
+        }
     }
     best
 }
 
-fn sw_best_prebuilt(seq: &[u8], pre: &Prebuilt) -> Option<LabelHit> {
-    let mut best: Option<LabelHit> = None;
-    let mut aligner = Aligner::new(-5, -1, |a: u8, b: u8| if a == b { 2 } else { -1 });
-    for r in pre.records {
-        let score = aligner.local(r.sequence.as_bytes(), seq).score;
-        let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: None };
-        if best.as_ref().map(|b| score > b.score).unwrap_or(true) { best = Some(hit); }
-    }
-    best
-}
-
-
-
+/// Edlib distance (C FFI; distance-only, semiglobal).
 fn edlib_best(seq: &[u8], records: &[SequenceRecord], max_dist: usize) -> Option<LabelHit> {
     let mut best: Option<LabelHit> = None;
-    let mut any = false;
     for r in records {
-        let mut cfg = unsafe { edlibDefaultAlignConfig() };
+        let mut cfg: EdlibAlignConfig = unsafe { edlibDefaultAlignConfig() };
+        cfg.mode = EdlibAlignMode_EDLIB_MODE_HW; // semiglobal (end-free) is close to adapter matching
+        cfg.task = EdlibAlignTask_EDLIB_TASK_DISTANCE;
         cfg.k = max_dist as i32;
-        cfg.mode = EdlibAlignMode_EDLIB_MODE_HW; // "HW" / infix
-        cfg.task = EdlibAlignTask_EDLIB_TASK_DISTANCE; // distance only
-        // Align pattern against read; distance is symmetric for our purpose.
-        let res = unsafe { edlibAlignRs(r.sequence.as_bytes(), seq, cfg) };
-        if res.editDistance >= 0 {
-            any = true;
-            let dist = res.editDistance as i32;
-            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score: dist, pos: None };
-            if best.as_ref().map(|b| dist < b.score).unwrap_or(true) { best = Some(hit); }
-        }
-    }
-    if any { best } else { None }
-}
 
+        let q = r.sequence.as_bytes();
+        let res = unsafe {
+            edlibAlign(
+                q.as_ptr() as *const i8, q.len() as i32,
+                seq.as_ptr() as *const i8, seq.len() as i32,
+                cfg,
+            )
+        };
+        let dist = res.editDistance;
+        // Free internal allocations, if any (safe even when distance-only).
+        unsafe { edlibFreeAlignResult(res) };
 
-fn classify_once(algo: Algorithm, seq: &[u8], ac: Option<&AhoCorasick>, records: &[SequenceRecord], pre: Option<&Prebuilt>, max_dist: usize) -> Option<LabelHit> {
-    match algo {
-        Algorithm::AhoCorasick => {
-            if let Some(ac) = ac {
-                if let Some(m) = ac.find(seq) {
-                    let r = &records[m.pattern()];
-                    return Some(LabelHit { name: r.name.to_string(), kind: r.kind, score: 0, pos: Some((m.start(), m.end())) });
-                }
+        if dist >= 0 {
+            let score = -(dist as i32);
+            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: None };
+            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) {
+                best = Some(hit);
             }
-            None
-        }
-        Algorithm::Myers => pre.map(|p| myers_best_prebuilt(seq, p, max_dist)).unwrap_or_else(|| myers_best(seq, records, max_dist)),
-        Algorithm::Edlib => edlib_best(seq, records, max_dist),
-        
-        Algorithm::Parasail => pre.map(|p| parasail_best_prebuilt(seq, p)).unwrap_or_else(|| parasail_best(seq, records)),
-Algorithm::TwoStageACParasail => {
-    if let Some(ac) = ac {
-        if let Some(m) = ac.find(seq) {
-            let r = &records[m.pattern()];
-            return parasail_best(seq, std::slice::from_ref(r));
-        }
-    }
-    parasail_best(seq, records)
-}
-        
-        Algorithm::TwoStageACMyers => {
-            if let Some(ac) = ac {
-                if let Some(m) = ac.find(seq) {
-                    let r = &records[m.pattern()];
-                    return pre.map(|p| { let sub = Prebuilt{ records: std::slice::from_ref(r), myers: vec![p.myers[ m.pattern() ].clone()], parasail: vec![p.parasail[ m.pattern() ].clone()] }; myers_best_prebuilt(seq, &sub, max_dist) }).unwrap_or_else(|| myers_best(seq, std::slice::from_ref(r), max_dist));
-                }
-            }
-            myers_best(seq, records, max_dist)
-        }
-    
-    }
-}
-
-pub fn benchmark_file(path: &str, kit_id: &str, algo: Algorithm, truth: Option<&HashMap<String, Truth>>, threads: Option<usize>, max_dist: usize)
--> Result<(u64, u64, u64, Duration, usize, f32)>
-{
-    let patterns = Arc::new(patterns_for_kit(kit_id)?);
-    let ac_idx = ac_index(&patterns);
-    let ac = Some(&ac_idx);
-    let prebuilt = Prebuilt::build(&patterns);
-
-    let truth_map = truth.cloned().map(Arc::new);
-
-    let tp = AtomicU64::new(0);
-    let fp = AtomicU64::new(0);
-    let fn_ = AtomicU64::new(0);
-    let nseq = AtomicUsize::new(0);
-
-    let sampling = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let flag = sampling.clone();
-    let cpu_samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::<f32>::new()));
-    let cpu_samples_cl = cpu_samples.clone();
-
-    let sampler = std::thread::spawn(move || {
-        let mut sys = System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
-        while flag.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_millis(200));
-            sys.refresh_cpu();
-            let v = sys.global_cpu_usage();
-            if let Ok(mut g) = cpu_samples_cl.lock() { g.push(v); }
-        }
-    });
-
-    let start = Instant::now();
-    let (_fmt, _processed) = seqio::for_each_parallel(path, threads, |r: NARead| {
-        nseq.fetch_add(1, Ordering::Relaxed);
-        let hit = classify_once(algo, &r.seq, ac, &patterns, Some(&prebuilt), max_dist);
-        if let (Some(tmap), Some(h)) = (truth_map.as_ref(), hit.as_ref()) {
-            if let Some(t) = tmap.get(&r.id) {
-                if t.expected.contains(&h.name) { tp.fetch_add(1, Ordering::Relaxed); }
-                else { fp.fetch_add(1, Ordering::Relaxed); }
-            }
-        } else if truth_map.is_some() && hit.is_none() {
-            fn_.fetch_add(1, Ordering::Relaxed);
-        }
-    })?;
-    let elapsed = start.elapsed();
-
-    sampling.store(false, Ordering::Relaxed);
-    let _ = sampler.join();
-    let cpu_mean = {
-        if let Ok(g) = cpu_samples.lock() {
-            if g.is_empty() { 0.0 } else { g.iter().copied().sum::<f32>() / (g.len() as f32) }
-        } else { 0.0 }
-    };
-
-    Ok((tp.load(Ordering::Relaxed), fp.load(Ordering::Relaxed), fn_.load(Ordering::Relaxed), elapsed, nseq.load(Ordering::Relaxed), cpu_mean))
-}
-
-
-fn myers_best_prebuilt(seq: &[u8], pre: &Prebuilt, max_dist: usize) -> Option<LabelHit> {
-    let mut best: Option<LabelHit> = None;
-    for (i, m) in pre.myers.iter().enumerate() {
-        if let Some(end) = m.find_all_end(seq, max_dist).next() {
-            let dist = end.1 as i32;
-            let r = &pre.records[i];
-            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score: dist, pos: None };
-            if best.as_ref().map(|b| dist < b.score).unwrap_or(true) { best = Some(hit); }
         }
     }
     best
 }
 
-fn parasail_best_prebuilt(seq: &[u8], pre: &Prebuilt) -> Option<LabelHit> { sw_best_prebuilt(seq, pre) }
+/// Placeholder to keep the crate portable. Swap in a real parasail-rs
+/// implementation when the native library is available on the host.
+fn parasail_best(_seq: &[u8], _records: &[SequenceRecord]) -> Option<LabelHit> {
+    None
+}
+
+/// Load a simple truth map (read_id -> expected_label). Supports CSV or TSV.
+pub fn load_truth<P: AsRef<Path>>(path: P) -> anyhow::Result<HashMap<String, String>> {
+    let p = path.as_ref();
+    let delim = if p.extension().map(|e| e == "tsv").unwrap_or(false) { b'\t' } else { b',' };
+    let mut rdr = csv::ReaderBuilder::new().has_headers(true).delimiter(delim).from_path(p)?;
+    let mut map = HashMap::new();
+    for rec in rdr.records() {
+        let r = rec?;
+        if r.len() >= 2 {
+            map.insert(r[0].to_string(), r[1].to_string());
+        }
+    }
+    Ok(map)
+}
+
+/// Benchmark a single file.
+///
+/// Returns:
+/// `(tp, fp, fn, elapsed, nseq, cpu_util (placeholder), input_format)`
+pub fn benchmark_file<P: AsRef<Path>>(
+    path: P,
+    kit: &Kit,
+    algo: BenchmarkAlgo,
+    truth: Option<HashMap<String, String>>,
+    threads: Option<usize>,
+) -> anyhow::Result<(u64, u64, u64, Duration, usize, f32, seqio::InputFormat)> {
+    let start = Instant::now();
+
+    // Atomic counters to be shared by worker threads.
+    let tp = Arc::new(AtomicU64::new(0));
+    let fp = Arc::new(AtomicU64::new(0));
+    let fn_ = Arc::new(AtomicU64::new(0));
+    let nseq = Arc::new(AtomicU64::new(0));
+
+    // Owned truth map moved into closure (if any).
+    let truth_owned = truth;
+
+    // Prebuild AC for ACMyers (immutable, thread-safe).
+    let pre: Option<Prebuilt> = match algo {
+        BenchmarkAlgo::ACMyers => Some(prebuild_for(&kit.adapters_and_primers)),
+        _ => None,
+    };
+
+    let tp_c = tp.clone();
+    let fp_c = fp.clone();
+    let fn_c = fn_.clone();
+    let nseq_c = nseq.clone();
+
+        // Own a copy of the static records so the closure can capture without borrowing `kit`.
+    let records_arc: Arc<Vec<SequenceRecord>> = Arc::new(kit.adapters_and_primers.to_vec());
+let fmt_n = seqio::for_each_parallel(path.as_ref(), threads, move |rec: seqio::NARead| {
+        nseq_c.fetch_add(1, Ordering::Relaxed);
+
+        let records = records_arc.as_slice();
+        let label = match algo {
+            BenchmarkAlgo::Myers => myers_best(&rec.seq, records, 24),
+            BenchmarkAlgo::ACMyers => {
+                // Rebuild a minimal pre each call (safe if `pre` is None),
+                // otherwise use the computed AC.
+                let local_pre = if let Some(ref pr) = pre { Some(pr) } else { None };
+                if let Some(pr) = local_pre { ac_myers_best(&rec.seq, pr, 24) } else { myers_best(&rec.seq, records, 24) }
+            }
+            BenchmarkAlgo::Edlib => edlib_best(&rec.seq, records, 24),
+            BenchmarkAlgo::Parasail => parasail_best(&rec.seq, records),
+        };
+
+        if let Some(ref tmap) = truth_owned {
+            let id = rec.id.as_str();
+            let expected = tmap.get(id);
+            match (label.as_ref().map(|l| l.name.as_str()), expected) {
+                (Some(found), Some(true_label)) => {
+                    if found == *true_label { tp_c.fetch_add(1, Ordering::Relaxed); }
+                    else { fp_c.fetch_add(1, Ordering::Relaxed); }
+                }
+                (Some(_), None) => { fp_c.fetch_add(1, Ordering::Relaxed); },
+                (None, Some(_)) => { fn_c.fetch_add(1, Ordering::Relaxed); },
+                (None, None) => {},
+            }
+        }
+    })?;
+
+    let elapsed = start.elapsed();
+
+    // Snapshot results
+    let tp_v = tp.load(Ordering::Relaxed);
+    let fp_v = fp.load(Ordering::Relaxed);
+    let fn_v = fn_.load(Ordering::Relaxed);
+    let nseq_v = nseq.load(Ordering::Relaxed) as usize;
+
+    // Portable placeholder for CPU util (can wire sysinfo back if desired)
+    let cpu_util = 0.0_f32;
+
+    Ok((tp_v, fp_v, fn_v, elapsed, nseq_v, cpu_util, fmt_n.0))
+}    // Own a copy of the static records so the closure can capture without borrowing `kit`.

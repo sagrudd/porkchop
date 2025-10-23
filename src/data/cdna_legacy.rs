@@ -15,10 +15,9 @@
 use crate::kit::{SequenceRecord, SeqKind, Provenance};
 
 const PYCHOPPER_DEFAULTS: Provenance = Provenance {
-    source: "epi2me-labs/pychopper (default primers)",
-    url: "https://github.com/epi2me-labs/pychopper/blob/master/pychopper/primer_data/cDNA_SSP_VNP.fas",
-    reference: "primer_data/cDNA_SSP_VNP.fas",
-    notes: "Community primer file providing SSP/VNP tokens.",
+    source: "https://github.com/epi2me-labs/pychopper/blob/master/pychopper/primer_data/cDNA_SSP_VNP.fas",
+    appendix: Some("primer_data/cDNA_SSP_VNP.fas"),
+    notes: Some("Community primer file providing SSP/VNP tokens."),
 };
 
 /// SSP — classic strand‑switching primer (historical PCR‑cDNA).

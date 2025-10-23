@@ -34,7 +34,7 @@ enum Commands {
         /// Optional truth set CSV with columns: read_id, expected_labels, [kind]
         #[arg(long)]
         truth: Option<String>,
-        /// Algorithm list (comma-separated): aho,myers,edlib,parasail,ac+myers,ac+parasail
+        /// BenchmarkAlgo list (comma-separated): aho,myers,edlib,parasail,ac+myers,ac+parasail
         #[arg(long, default_value = "aho,myers,edlib,parasail,ac+myers,ac+parasail")]
         algorithms: String,
         /// Max edit distance for approximate matchers
@@ -99,13 +99,14 @@ fn cmd_describe(kit: &str, as_csv: bool) -> polars::prelude::PolarsResult<()> {
             porkchop::SeqKind::AdapterBottom => "AdapterBottom",
             porkchop::SeqKind::Primer => "Primer",
             porkchop::SeqKind::Barcode => "Barcode",
+            porkchop::SeqKind::Flank => todo!(),
         });
         seqs.push(r.sequence);
         prov_src.push(r.provenance.source);
         prov_app.push(r.provenance.appendix.unwrap_or(""));
     }
 
-    let df = df!(
+    let mut df = df!(
         "name" => names,
         "kind" => kinds,
         "sequence" => seqs,
@@ -115,7 +116,7 @@ fn cmd_describe(kit: &str, as_csv: bool) -> polars::prelude::PolarsResult<()> {
 
     if as_csv {
         let mut w = CsvWriter::new(std::io::stdout());
-        w.include_header(true).finish(&df)?;
+        w.include_header(true).finish(&mut df)?;
     } else {
         print_table(&df);
     }
@@ -131,15 +132,15 @@ fn cmd_benchmark(
     threads: Option<usize>,
     as_csv: bool
 ) -> polars::prelude::PolarsResult<()> {
-    use porkchop::benchmark::{self, Algorithm};
+    use porkchop::benchmark::{self, BenchmarkAlgo};
 
     let truth_map = match truth { Some(p) => benchmark::load_truth(p).ok(), None => None };
-    let algos = Algorithm::parse_list(algorithms);
+    let algos = BenchmarkAlgo::from_list(algorithms);
 
     let mut rows: Vec<(String,String,u64,u64,u64,u128,usize,f32,usize)> = Vec::new();
     for file in files {
         for algo in &algos {
-            let (tp, fp, fn_, dur, nseq, cpu) = benchmark::benchmark_file(file, kit, *algo, truth_map.as_ref(), threads, max_dist)
+            let (tp, fp, fn_, dur, nseq, cpu, input_format) = benchmark::benchmark_file(file, &kit, *algo, truth_map.map(|m| m.clone()), threads, max_dist)
                 .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
             rows.push((file.clone(), algo.as_str().to_string(), tp, fp, fn_, dur.as_millis(), nseq, cpu, threads.unwrap_or_else(num_cpus::get)));
         }
@@ -158,16 +159,16 @@ fn cmd_benchmark(
             let q: Vec<f64> = rows.iter().map(|r| { let tp=r.2 as f64; let fn_=r.4 as f64; if tp+fn_>0.0 { tp/(tp+fn_) } else { f64::NAN } }).collect();
             p.iter().zip(q.iter()).map(|(pp,rr)| if pp.is_nan()||rr.is_nan()||(*pp+*rr)==0.0 { f64::NAN } else { 2.0*pp*rr/(pp+rr) }).collect::<Vec<f64>>()
         },
-        "time_ms" => rows.iter().map(|r| r.5).collect::<Vec<u128>>(),
+        "time_ms" => rows.iter().map(|r| r.5).map(|v| v as u64).collect::<Vec<u64>>(),
         "time_per_seq_us" => rows.iter().map(|r| if r.6>0 { (r.5 as f64 * 1000.0)/(r.6 as f64) } else { f64::NAN }).collect::<Vec<f64>>(),
-        "nseq" => rows.iter().map(|r| r.6).collect::<Vec<usize>>(),
+        "nseq" => rows.iter().map(|r| r.6 as u64).collect::<Vec<u64>>(),
         "cpu_mean_pct" => rows.iter().map(|r| r.7).collect::<Vec<f32>>(),
-        "threads" => rows.iter().map(|r| r.8).collect::<Vec<usize>>()
+        "threads" => rows.iter().map(|r| r.8 as u64).collect::<Vec<u64>>()
     )?;
 
     if as_csv {
         let mut w = CsvWriter::new(std::io::stdout());
-        w.include_header(true).finish(&df)?;
+        w.include_header(true).finish(&mut df)?;
     } else {
         print_table(&df);
     }

@@ -6,10 +6,9 @@
 use crate::kit::{SequenceRecord, SeqKind, Provenance};
 
 const PORECHOP_FORK: Provenance = Provenance {
-    source: "Sn0flingan/Poresnip (fork of rrwick/Porechop)",
-    url: "https://github.com/Sn0flingan/Poresnip/blob/master/porechop/adapters.py",
-    reference: "adapters.py (kit_adapters)",
-    notes: "Motor-binding regions are omitted in the fork; we reference ‘trunk’ fragments.",
+    source: "https://github.com/Sn0flingan/Poresnip/blob/master/porechop/adapters.py",
+    appendix: Some("adapters.py (kit_adapters)"),
+    notes: Some("Motor-binding regions are omitted in the fork; we reference ‘trunk’ fragments."),
 };
 
 /// Legacy Y‑adapter trunk (SQK‑NSK007/LSK108/LSK109) — start/top.

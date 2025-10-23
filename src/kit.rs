@@ -4,10 +4,9 @@
 /// Where a sequence definition came from.
 #[derive(Debug, Clone, Copy)]
 pub struct Provenance {
-    /// Source URL or short tag.
     pub source: &'static str,
-    /// Appendix / document section reference (optional).
     pub appendix: Option<&'static str>,
+    pub notes: Option<&'static str>,
 }
 
 /// High-level category of sequence.
@@ -17,6 +16,8 @@ pub enum SeqKind {
     AdapterBottom,
     Primer,
     Barcode,
+
+    Flank,
 }
 
 /// A named nucleotide sequence with kind and provenance.

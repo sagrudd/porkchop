@@ -33,7 +33,8 @@ use std::path::Path;
 use anyhow::Result;
 use rayon::ThreadPoolBuilder;
 use needletail::parse_fastx_file;
-use rust-htslib::bam;
+use rust_htslib::bam;
+use rust_htslib::bam::Read;
 
 /// Input format detected from path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +80,7 @@ where
                 let mut reader = parse_fastx_file(p)?;
                 while let Some(record) = reader.next() {
                     let rec = record?;
-                    let id = rec.id().map(|s| String::from_utf8_lossy(s).to_string()).unwrap_or_default();
+                    let id = String::from_utf8_lossy(rec.id()).to_string();
                     let seq = rec.seq().to_vec();
                     let qual = rec.qual().map(|q| q.to_vec());
                     let naread = NARead { id, seq, qual };
@@ -90,8 +91,8 @@ where
             InputFormat::Bam | InputFormat::Sam => {
                 let mut reader = bam::Reader::from_path(p)?;
                 if n > 1 { let _ = reader.set_threads(n); }
-                let mut rec = bam::Record::new();
-                while reader.read(&mut rec)? {
+for result in reader.records() {
+                let rec = result?;
                     let id = String::from_utf8_lossy(rec.qname()).to_string();
                     let seq = rec.seq().as_bytes();
                     let qual = {

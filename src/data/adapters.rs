@@ -14,10 +14,9 @@
 use crate::kit::{SequenceRecord, SeqKind, Provenance};
 
 const CHTD_A15: Provenance = Provenance {
-    source: "Chemistry Technical Document (CHTD_500_v1_revAR_25Nov2024)",
-    url: "https://nanoporetech.com/document/chemistry-technical-document",
-    reference: "Appendix 15: Adapter sequences",
-    notes: "Sequences transcribed verbatim from ONT documentation.",
+    source: "https://nanoporetech.com/document/chemistry-technical-document",
+    appendix: Some("Appendix 15: Adapter sequences"),
+    notes: Some("Sequences transcribed verbatim from ONT documentation."),
 };
 
 /// Ligation Adapter (LA) top strand. 5'-TTTTTTTTCCTGTACTTCGTTCAGTTACGTATTGCT-3'
@@ -81,7 +80,7 @@ pub const SSPII: SequenceRecord = SequenceRecord {
     name: "SSPII",
     kind: SeqKind::Primer,
     sequence: "TTTCTGTTGGTGCTGATATTGCTTTVVVVTTVVVVTTVVVVTTVVVVTTTmGmGmG",
-    provenance: Provenance { notes: "V = A/C/G; mG = riboguanosine", ..CHTD_A15 },
+    provenance: Provenance { notes: Some("V = A/C/G; mG = riboguanosine"), ..CHTD_A15 },
 };
 
 /// cDNA RT Adapter (CRTA).

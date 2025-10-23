@@ -14,10 +14,9 @@
 use crate::kit::{SequenceRecord, SeqKind, Provenance};
 
 const CHTD_A14: Provenance = Provenance{
-    source: "Chemistry Technical Document (CHTD_500_v1_revAR_25Nov2024)",
-    url: "https://nanoporetech.com/document/chemistry-technical-document",
-    reference: "Appendix 14: Barcode sequences",
-    notes: "NB01–NB96 list; shared BP/BC/RB/16S/RLB cores; flanking motifs for multiple kits.",
+    source: "https://nanoporetech.com/document/chemistry-technical-document",
+    appendix: Some("Appendix 14: Barcode sequences"),
+    notes: Some("NB01–NB96 list; shared BP/BC/RB/16S/RLB cores; flanking motifs for multiple kits."),
 };
 
 // === Flanking sequences ===
@@ -42,7 +41,7 @@ pub const RPB_FLANK: SequenceRecord = SequenceRecord{ name: "RPB_flank", kind: S
 
 /// 16S primer + barcode flanks.
 pub const SIXTEENS_FLANK: SequenceRecord = SequenceRecord{ name: "16S_flank", kind: SeqKind::Flank, sequence: "ATCGCCTACCGTGAC", provenance: CHTD_A14 };
-pub const SIXTEENS_FWD_TARGET: SequenceRecord = SequenceRecord{ name: "16S_fwd_target", kind: SeqKind::Primer, sequence: "AGAGTTTGATCMTGGCTCAG", provenance: Provenance{ notes: "M = A/C wobble base", ..CHTD_A14 } };
+pub const SIXTEENS_FWD_TARGET: SequenceRecord = SequenceRecord{ name: "16S_fwd_target", kind: SeqKind::Primer, sequence: "AGAGTTTGATCMTGGCTCAG", provenance: Provenance{ notes: Some("M = A/C wobble base"), ..CHTD_A14 } };
 pub const SIXTEENS_REV_TARGET: SequenceRecord = SequenceRecord{ name: "16S_rev_target", kind: SeqKind::Primer, sequence: "CGGTTACCTTGTTACGACTT", provenance: CHTD_A14 };
 
 // === NB01–NB96 forward barcode cores ===

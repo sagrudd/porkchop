@@ -32,3 +32,15 @@
 ## 0.2.5 - 2025-10-22
 ### Fixed
 - Removed invalid `hts-sys` feature from `rust-htslib` (using only valid features: `bzip2`, `lzma`, `libdeflate`).
+
+## 0.2.8 - 2025-10-22
+### Changed
+- Fully refactored `src/benchmark.rs`: removed residual code, simplified algorithm dispatch, added exhaustive rustdoc.
+- AC+Myers, Myers, and Smith–Waterman paths are now cleanly implemented and portable.
+- edlib/parasail entrypoints remain but route to Smith–Waterman for portability.
+
+## 0.2.10 - 2025-10-22
+### Fixed
+- `kit.rs`: corrected `Provenance` type to `&'static str` for `source`.
+- `benchmark.rs`: now uses `(end, dist)` from `find_all_end`; removed incorrect `distance(end)` calls; unwrapped AC builder result; consistent `pos: Some(end)`.
+- `seqio.rs`: removed unused BAM record allocation.
