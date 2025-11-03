@@ -1,6 +1,6 @@
 # porkchop
 
-**Version:** 0.2.64
+**Version:** 0.2.69
 
 porkchop is a Rust toolkit for Oxford Nanopore data: kit registry, high‑performance IO, and read **screening** to identify adapters, barcodes, primers and flanks.
 

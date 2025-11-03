@@ -22,7 +22,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder, AhoCorasickKind};
 use bio::pattern_matching::myers::{Myers, MyersBuilder};
 use edlib_rs::edlibrs::{
     edlibAlign, edlibDefaultAlignConfig, edlibFreeAlignResult,
-    EdlibAlignConfig, EdlibAlignMode_EDLIB_MODE_HW, EdlibAlignTask_EDLIB_TASK_DISTANCE,
+    EdlibAlignConfig, EdlibAlignMode_EDLIB_MODE_HW, EdlibAlignTask_EDLIB_TASK_LOC,
 };
 
 use crate::kit::{SequenceRecord, SeqKind, Kit};
@@ -208,7 +208,7 @@ fn edlib_best(seq: &[u8], records: &[SequenceRecord], max_dist: usize) -> Option
     for r in records {
         let mut cfg: EdlibAlignConfig = unsafe { edlibDefaultAlignConfig() };
         cfg.mode = EdlibAlignMode_EDLIB_MODE_HW; // semiglobal (end-free)
-        cfg.task = EdlibAlignTask_EDLIB_TASK_DISTANCE;
+        cfg.task = EdlibAlignTask_EDLIB_TASK_LOC;
         cfg.k = max_dist as i32;
 
         // forward
@@ -396,21 +396,27 @@ pub fn classify_all(
                 for r in records {
                     let mut cfg: EdlibAlignConfig = edlibDefaultAlignConfig();
                     cfg.mode = EdlibAlignMode_EDLIB_MODE_HW; // semiglobal (end-free)
-                    cfg.task = EdlibAlignTask_EDLIB_TASK_DISTANCE;
+                    cfg.task = EdlibAlignTask_EDLIB_TASK_LOC;
                     cfg.k = max_dist as i32;
 
                     // forward
                     let q = r.sequence.as_bytes();
                     let res = edlibAlign(q.as_ptr() as *const i8, q.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
                     let mut matched = false;
-                    if res.editDistance >= 0 { out.push((r.name.to_string(), r.kind, false, 0)); matched = true;
+                    if res.editDistance >= 0 && res.numLocations > 0 {
+                        let spos = unsafe { *res.startLocations } as usize;
+                        out.push((r.name.to_string(), r.kind, false, spos));
+                        matched = true;
                     }
                     edlibFreeAlignResult(res);
 
                     if !matched {
                         let rc = revcomp_bytes(r.sequence.as_bytes());
                         let res2 = edlibAlign(rc.as_ptr() as *const i8, rc.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
-                        if res2.editDistance >= 0 { out.push((r.name.to_string(), r.kind, true, 0)); }
+                        if res2.editDistance >= 0 && res2.numLocations > 0 {
+                            let spos = unsafe { *res2.startLocations } as usize;
+                            out.push((r.name.to_string(), r.kind, true, spos));
+                        }
                         edlibFreeAlignResult(res2);
                     }
                 }

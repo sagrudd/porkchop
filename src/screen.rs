@@ -5,7 +5,118 @@ use std::time::{Duration, Instant};
 use crate::benchmark::{self, BenchmarkAlgo};
 use crate::kit::SeqKind;
 use crate::list_supported_kits;
-use crate::seqio::for_each_parallel;
+use crate::seqio::{for_each_parallel, NARead};
+use polars::prelude::*;
+use rayon::ThreadPoolBuilder;
+use std::sync::mpsc;
+fn canonical_barcode(name: &str) -> Option<String> {
+    // Map tokens like "BP05/BC05/RB05/16S05/RLB05" -> "BC05"
+    for tok in name.split('/') {
+        if tok.len() == 4 {
+            let (pre, num) = tok.split_at(2);
+            if (pre == "BP" || pre == "BC" || pre == "RB" || pre == "16" || pre == "RL") && num.chars().all(|c| c.is_ascii_digit()) {
+                return Some(format!("BC{}", num));
+            }
+        } else if tok.starts_with("BC") && tok[2..].chars().all(|c| c.is_ascii_digit()) {
+            return Some(tok.to_string());
+        }
+    }
+    None
+}
+
+fn weight_of(kind: SeqKind) -> f64 {
+    match kind {
+        SeqKind::AdapterTop | SeqKind::AdapterBottom => 3.0,
+        SeqKind::Primer => 2.0,
+        SeqKind::Barcode => 1.0,
+        SeqKind::Flank => 0.5,
+    }
+}
+
+fn infer_kits_df(tally: &std::collections::HashMap<(String, SeqKind), usize>) -> polars::prelude::PolarsResult<DataFrame> {
+    use std::collections::{HashMap, HashSet};
+    use std::cmp::Ordering;
+
+    let kits = crate::list_supported_kits();
+    let mut rows: Vec<(String, String, String, f64, f64, usize, usize)> = Vec::new();
+    let mut scores: Vec<f64> = Vec::new();
+
+    let total_hits: usize = tally.values().copied().sum();
+
+    for k in kits {
+        let mut sig: HashSet<(String, SeqKind)> = HashSet::new();
+        for r in k.adapters_and_primers {
+            sig.insert((r.name.to_string(), r.kind));
+        }
+        for r in k.barcodes {
+            let nm = canonical_barcode(r.name).unwrap_or_else(|| r.name.to_string());
+            sig.insert((nm, SeqKind::Barcode));
+            if matches!(r.kind, SeqKind::Flank) {
+                sig.insert((r.name.to_string(), SeqKind::Flank));
+            }
+        }
+
+        let mut score = 0.0f64;
+        let mut matched = 0usize;
+        for ((nm, kind), cnt) in tally.iter() {
+            let key = if *kind == SeqKind::Barcode {
+                (canonical_barcode(nm).unwrap_or_else(|| nm.clone()), *kind)
+            } else {
+                (nm.clone(), *kind)
+            };
+            if sig.contains(&key) {
+                matched += 1;
+                score += weight_of(*kind) * (*cnt as f64);
+            }
+        }
+        scores.push(score);
+
+        rows.push((
+            k.id.0.to_string(),
+            k.description.to_string(),
+            k.chemistry.to_string(),
+            score,
+            0.0, // prob, filled below
+            matched,
+            total_hits,
+        ));
+    }
+
+    // Softmax probabilities
+    let max_s = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let exps: Vec<f64> = scores.iter().map(|s| (s - max_s).exp()).collect();
+    let z: f64 = exps.iter().sum::<f64>().max(1e-12);
+    let probs: Vec<f64> = exps.iter().map(|e| e / z).collect();
+
+    for (i, row) in rows.iter_mut().enumerate() {
+        row.4 = probs[i];
+    }
+
+    // Sort rows by probability desc
+    rows.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap_or(Ordering::Equal));
+
+    // Build DataFrame via df! macro
+    let kit_v: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
+    let desc_v: Vec<String> = rows.iter().map(|r| r.1.clone()).collect();
+    let chem_v: Vec<String> = rows.iter().map(|r| r.2.clone()).collect();
+    let score_v: Vec<f64> = rows.iter().map(|r| r.3).collect();
+    let prob_v: Vec<f64> = rows.iter().map(|r| r.4).collect();
+    let matched_v: Vec<u64> = rows.iter().map(|r| r.5 as u64).collect();
+    let total_v: Vec<u64> = rows.iter().map(|r| r.6 as u64).collect();
+
+    let df = df!(
+        "kit"             => kit_v,
+        "description"     => desc_v,
+        "chemistry"       => chem_v,
+        "score"           => score_v,
+        "probability"     => prob_v,
+        "matched_motifs"  => matched_v,
+        "total_hits"      => total_v,
+    )?;
+
+    Ok(df)
+}
+
 
 // TUI
 use crossterm::event::{self, Event, KeyCode};
@@ -77,73 +188,114 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let p = opts.fraction.clamp(0.0, 1.0);
     let threads = opts.threads;
 
+
+    // Build a dedicated Rayon pool for classification
+    let threads_n = opts.threads.unwrap_or_else(num_cpus::get).max(1);
+    let pool = ThreadPoolBuilder::new().num_threads(threads_n).build()?;
+
+    // Bounded work queue to decouple IO from CPU
+    let (tx, rx) = mpsc::sync_channel::<NARead>(threads_n * 1024);
+    let rx = Arc::new(Mutex::new(rx));
+    // Spawn a producer per file (reading thread); keep IO single-threaded inside each reader,
+    // classification happens in the Rayon pool below.
+    let mut producers = Vec::new();
     for file in &opts.files {
         let file = file.clone();
-        let unit_w = unit_tally.clone();
-        let combo_w = combo_tally.clone();
-        let algo = opts.algo;
-        let records_arc = records.clone();
-        let prebuilt_c = prebuilt.clone();
-        let md = opts.max_dist;
+        let tx_p = tx.clone();
+        let done_p = done.clone();
+        let skipped_p = skipped.clone();
         let p_sample = p;
-        let done_c = done.clone();
-        let screened_c = screened.clone();
-        let unclassified_c = unclassified.clone();
-        let skipped_c = skipped.clone();
-
-        let _ = for_each_parallel(file, threads, move |read| {
-            if done_c.load(Ordering::SeqCst) { return; }
-
-            // Bernoulli(p) sampling via deterministic hash of read id
-            let take = if p_sample >= 1.0 {
-                true
-            } else {
-                let mut h: u64 = 0xcbf29ce484222325;
-                for b in read.id.as_bytes() { h = h.wrapping_mul(0x100000001b3) ^ (*b as u64); }
-                (h as f64 / std::u64::MAX as f64) < p_sample
-            };
-            if !take { skipped_c.fetch_add(1, Ordering::Relaxed); return; }
-
-            // Enumerate all motif hits for this read using requested algorithm
-            let hits = benchmark::classify_all(algo, &read.seq, records_arc.as_slice(), prebuilt_c.as_deref(), md);
-
-            if hits.is_empty() {
-                screened_c.fetch_add(1, Ordering::Relaxed);
-                unclassified_c.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-
-            // Tally individual hits
-            {
-                let mut g = unit_w.lock().unwrap();
-                for (name, kind, _is_rc, _pos) in &hits {
-                    *g.entry((name.clone(), *kind)).or_insert(0) += 1;
+        producers.push(std::thread::spawn(move || {
+            let _ = for_each_parallel(file, Some(1), move |read| {
+                if done_p.load(Ordering::SeqCst) { return; }
+                // Bernoulli(p) sampling via deterministic hash of read id
+                let take = if p_sample >= 1.0 {
+                    true
+                } else {
+                    let mut h: u64 = 0xcbf29ce484222325;
+                    for b in read.id.as_bytes() { h = h.wrapping_mul(0x100000001b3) ^ (*b as u64); }
+                    (h as f64 / std::u64::MAX as f64) < p_sample
+                };
+                if !take { skipped_p.fetch_add(1, Ordering::Relaxed); return; }
+                if tx_p.send(read).is_err() {
+                    // channel closed; stop producing
                 }
-            }
-
-            // Compose aggregate identifier for this read: e.g., "NB_flank_fwd + 16S_rev_target"
-            let mut labels: Vec<String> = Vec::new();
-            let mut seen = HashSet::new();
-            for (name, kind, is_rc, pos) in hits {
-                let orient = if is_rc { "rev" } else { "fwd" };
-                let leaf = name;
-                if seen.insert(leaf.clone()) {
-                    labels.push(leaf);
-                }
-            }
-            labels.sort();
-            let mut labels_pos: Vec<(usize, String)> = labels.into_iter().map(|s| (0usize, s)).collect();
-labels_pos.sort_by_key(|(p, _)| *p);
-let combo = labels_pos.into_iter().map(|(_, s)| s).collect::<Vec<_>>().join(" + ");
-
-            {
-                let mut g = combo_w.lock().unwrap();
-                *g.entry(combo).or_insert(0) += 1;
-            }
-
-            screened_c.fetch_add(1, Ordering::Relaxed);
-        });
+            });
+        }));
     }
+    drop(tx); // close when producers join
+
+    // Start a minimal Tokio runtime for ticking in TUI (interval sleeps)
+
+    // Spawn classification workers in Rayon pool
+    let unit_w = unit_tally.clone();
+    let combo_w = combo_tally.clone();
+    let records_arc = records.clone();
+    let prebuilt_c = prebuilt.clone();
+    let algo = opts.algo;
+    let max_dist = opts.max_dist;
+    let screened_c = screened.clone();
+    let unclassified_c = unclassified.clone();
+
+    pool.install(|| {
+        rayon::scope(|s| {
+            for _ in 0..threads_n {
+                let rx_c = rx.clone();  // Arc<Mutex<Receiver<NARead>>>
+                let unit_wc = unit_w.clone();
+                let combo_wc = combo_w.clone();
+                let records_c = records_arc.clone();
+                let pre_c = prebuilt_c.clone();
+                let done_c = done.clone();
+                let screened_wc = screened_c.clone();
+                let unclassified_wc = unclassified_c.clone();
+                s.spawn(move |_| {
+                    loop {
+                        let read = { let guard = rx_c.lock().unwrap(); guard.recv() };
+                        let read = match read { Ok(r) => r, Err(_) => break };
+                        if done_c.load(Ordering::SeqCst) { break; }
+                        // Enumerate all motif hits for this read using requested algorithm
+                        let hits = benchmark::classify_all(algo, &read.seq, records_c.as_slice(), pre_c.as_deref(), max_dist);
+
+                        if hits.is_empty() {
+                            screened_wc.fetch_add(1, Ordering::Relaxed);
+                            unclassified_wc.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+
+                        // Tally individual hits
+                        {
+                            let mut g = unit_wc.lock().unwrap();
+                            for (name, kind, _is_rc, _pos) in &hits {
+                                *g.entry((name.clone(), *kind)).or_insert(0) += 1;
+                            }
+                        }
+
+                        // Compose aggregate identifier for this read ordered by position
+                        let mut labels_pos: Vec<(usize, String)> = Vec::new();
+                        let mut seen = HashSet::new();
+                        for (name, _kind, _is_rc, pos) in hits {
+                            if seen.insert(name.clone()) {
+                                labels_pos.push((pos, name));
+                            }
+                        }
+                        labels_pos.sort_by_key(|(pos, _)| *pos);
+                        let id = labels_pos.into_iter().map(|(_, nm)| nm).collect::<Vec<_>>().join(" + ");
+                        {
+                            let mut g = combo_wc.lock().unwrap();
+                            *g.entry(id).or_insert(0) += 1;
+                        }
+
+                        screened_wc.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+    });
+
+    // Ensure producers finished
+    for jh in producers { let _ = jh.join(); }
+
+
 
     done.store(true, Ordering::SeqCst);
     std::thread::sleep(Duration::from_millis(150));
@@ -268,6 +420,14 @@ fn tui_loop(
                 if k.code == KeyCode::Char('q') || k.code == KeyCode::Esc {
                     done.store(true, Ordering::SeqCst);
                     disable_raw_mode()?;
+    // Build a Polars table ranking likely kits by probability
+    if let Ok(unit_map) = unit.lock() {
+        if let Ok(df) = infer_kits_df(&*unit_map) {
+            eprintln!("\nMost likely kits (probabilities from weighted evidence):");
+            eprintln!("{:?}", df);
+        }
+    }
+
                     crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
                     std::process::exit(0);
                 }
