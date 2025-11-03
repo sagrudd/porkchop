@@ -1,4 +1,10 @@
 
+## [0.2.38] - 2025-11-03
+- CLI: “chemistry” column now uses canonical labels (`BaseChemistry::label()` / `Display`).
+- Core: add `BaseChemistry::label()` + `Display` (stable human-readable names).
+- Example: LSK114 → "ligation sequencing".
+
+
 ## [0.2.37] - 2025-10-23
 - Remove unnecessary `mut` on DataFrame bindings where CSV writing isn't used (silences `unused_mut` warning).
 

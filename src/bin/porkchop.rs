@@ -76,7 +76,7 @@ fn cmd_list_kits() -> polars::prelude::PolarsResult<()> {
         "kit" => ids,
         "description" => desc,
         "legacy" => legacy,
-        "chemistry" => chemistry
+        "chemistry" => kits.iter().map(|k| k.chemistry.to_string()).collect::<Vec<String>>()
     )?;
 
     print_table(&df);
