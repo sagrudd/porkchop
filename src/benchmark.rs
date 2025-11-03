@@ -354,8 +354,8 @@ pub fn classify_all(
     records: &[SequenceRecord],
     prebuilt: Option<&Prebuilt>,
     max_dist: usize,
-) -> Vec<(String, SeqKind, bool)> {
-    let mut out: Vec<(String, SeqKind, bool)> = Vec::new();
+) -> Vec<(String, SeqKind, bool, usize)> {
+    let mut out: Vec<(String, SeqKind, bool, usize)> = Vec::new();
     match algo {
         BenchmarkAlgo::ACMyers => {
             if let Some(pre) = prebuilt {
@@ -372,9 +372,7 @@ pub fn classify_all(
                         r.sequence.as_bytes().to_vec()
                     };
                     let mut my: Myers<u64> = MyersBuilder::new().build_64(pat_bytes.into_iter());
-                    if let Some((_s, _e, dist)) = my.find_all(seq, max_dist as u8).next() {
-                        let _ = dist;
-                        out.push((r.name.to_string(), r.kind, is_rc));
+                    if let Some((s, _e, dist)) = my.find_all(seq, max_dist as u8).next() { let _ = dist; out.push((r.name.to_string(), r.kind, is_rc, s));
                     }
                 }
             }
@@ -383,17 +381,13 @@ pub fn classify_all(
             for r in records {
                 // forward
                 let mut m: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
-                if let Some((_s,_e,dist)) = m.find_all(seq, max_dist as u8).next() {
-                    let _ = dist;
-                    out.push((r.name.to_string(), r.kind, false));
+                if let Some((s,_e,dist)) = m.find_all(seq, max_dist as u8).next() { let _ = dist; out.push((r.name.to_string(), r.kind, false, s));
                     continue;
                 }
                 // reverse-complement motif
                 let rc = revcomp_bytes(r.sequence.as_bytes());
                 let mut mrc: Myers<u64> = MyersBuilder::new().build_64(rc.into_iter());
-                if let Some((_s,_e,dist)) = mrc.find_all(seq, max_dist as u8).next() {
-                    let _ = dist;
-                    out.push((r.name.to_string(), r.kind, true));
+                if let Some((s,_e,dist)) = mrc.find_all(seq, max_dist as u8).next() { let _ = dist; out.push((r.name.to_string(), r.kind, true, s));
                 }
             }
         }
@@ -409,18 +403,14 @@ pub fn classify_all(
                     let q = r.sequence.as_bytes();
                     let res = edlibAlign(q.as_ptr() as *const i8, q.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
                     let mut matched = false;
-                    if res.editDistance >= 0 {
-                        out.push((r.name.to_string(), r.kind, false));
-                        matched = true;
+                    if res.editDistance >= 0 { out.push((r.name.to_string(), r.kind, false, 0)); matched = true;
                     }
                     edlibFreeAlignResult(res);
 
                     if !matched {
                         let rc = revcomp_bytes(r.sequence.as_bytes());
                         let res2 = edlibAlign(rc.as_ptr() as *const i8, rc.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
-                        if res2.editDistance >= 0 {
-                            out.push((r.name.to_string(), r.kind, true));
-                        }
+                        if res2.editDistance >= 0 { out.push((r.name.to_string(), r.kind, true, 0)); }
                         edlibFreeAlignResult(res2);
                     }
                 }
@@ -430,16 +420,12 @@ pub fn classify_all(
             // Fallback: behave like Myers (forward + RC motifs), do not RC the read
             for r in records {
                 let mut m: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
-                if let Some((_s,_e,dist)) = m.find_all(seq, max_dist as u8).next() {
-                    let _ = dist;
-                    out.push((r.name.to_string(), r.kind, false));
+                if let Some((s,_e,dist)) = m.find_all(seq, max_dist as u8).next() { let _ = dist; out.push((r.name.to_string(), r.kind, false, s));
                     continue;
                 }
                 let rc = revcomp_bytes(r.sequence.as_bytes());
                 let mut mrc: Myers<u64> = MyersBuilder::new().build_64(rc.into_iter());
-                if let Some((_s,_e,dist)) = mrc.find_all(seq, max_dist as u8).next() {
-                    let _ = dist;
-                    out.push((r.name.to_string(), r.kind, true));
+                if let Some((s,_e,dist)) = mrc.find_all(seq, max_dist as u8).next() { let _ = dist; out.push((r.name.to_string(), r.kind, true, s));
                 }
             }
         }

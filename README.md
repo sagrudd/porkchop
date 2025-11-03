@@ -1,17 +1,60 @@
-# porkchop\n**Version:** 0.2.29  \n\n**Version:** 0.2.5  \n**License:** MPL-2.0\n\nThis package combines the authoritative Oxford Nanopore **kit registry** with a high-performance IO layer (FASTQ/FASTQ.GZ/SAM/BAM) and a **benchmark** framework to evaluate adapter/primer/barcode classifiers.\n\n> This archive builds with **placeholder kit data** so you can compile and run the CLI immediately.\n> In your environment we'll merge the full registry from the upstream authoritative repo:\n> `https://github.com/sagrudd/porkchop`.\n\n## CLI\n\n```bash\nporkchop list-kits\nporkchop describe-kit --kit NBD114.24\nporkchop benchmark --kit NBD114.24 --algorithms aho,myers,edlib,parasail,ac+myers,ac+parasail reads.fastq.gz\n```\n\nThe `describe-kit` output is **not truncated** and includes provenance columns (`provenance_source`, `provenance_appendix`).\n\n## Truth set (benchmark)\nCSV/TSV with headers: `read_id, expected_labels, [kind]` where `expected_labels` are `;`-separated label symbols.\n\n## Notes\n- For a patch release from 0.2.0, we preserved all benchmark code and CLI. Only the crate version and docs were bumped.\n\n\n---\n\n## Minimum Supported Rust Version (MSRV)\n\n- **Rust 1.90** (declared via `rust-version = "1.90"`).\n\n## Build\n\n```bash\ncargo build --release\n```\n\n## CLI usage (verbose)\n\n### List kits\n```bash\nporkchop list-kits\n```\n\n### Describe a kit (no truncation; provenance columns included)\n```bash\nporkchop describe-kit --kit NBD114.24\n# Add --csv to emit machine‑readable output\n```\n\n### Benchmark classifiers\n```bash\n# With a truth set\nporkchop benchmark --kit NBD114.24 --truth truth.csv \\n  --algorithms aho,myers,edlib,parasail,ac+myers,ac+parasail \\n  --threads 16 reads1.fastq.gz reads2.bam > results.tsv\n\n# Without a truth set (timing/throughput + CPU utilisation only)\nporkchop benchmark --kit PCS114 reads.fastq.gz --threads 32\n```\n\n#### Truth set schema\nA CSV/TSV with headers:\n- `read_id` — the read identifier\n- `expected_labels` — semicolon‑separated label symbols (e.g., `NB01;SSPII`)\n- `kind` *(optional)* — one of `adapter`, `primer`, `barcode`; restricts evaluation\n\n#### Performance tuning\n- `--threads` (default: all logical cores) controls Rayon and BAM reader threads.\n- Classifiers using Myers/Parasail **prebuild** automata/profiles once per run to reduce per‑read overhead.\n- Keep the callback in `seqio::for_each_parallel` lightweight; aggregate metrics outside the closure when possible.\n\n## Provenance\n\nEach sequence record carries a `provenance_source` (URL/tag) and optional `provenance_appendix` to track origin.
+# porkchop
+
+**Version:** 0.2.64
+
+porkchop is a Rust toolkit for Oxford Nanopore data: kit registry, high‑performance IO, and read **screening** to identify adapters, barcodes, primers and flanks.
 
 ---
 
-## New: `screen` — infer library composition
-Quickly scan a dataset and surface the most common synthetic sequences (adapters/primers/barcodes) using multiple cores.
+## Features
+
+- `list-kits` — tabular kit overview with correct base chemistry
+- `describe-kit` — show kit details and motifs
+- `screen` — classify synthetic sequences in reads (FASTQ/SAM/BAM)
+- `bench` — benchmark alternative matchers
+
+### Screen highlights
+
+- Multi-format input: **FASTQ**, **SAM**, **BAM**
+- Parallel processing across all cores by default
+- Fractional subsampling (`--fraction`, default 0.05)
+- Live TUI (ratatui) with screened / hits / unclassified / skipped and top contexts
+- JSON export of aggregate contexts (`--json out.json`)
+- Default matcher distance: `--max-dist=2`
+
+---
+
+## Build
 
 ```bash
-porkchop screen \\
-  --files reads1.fastq.gz reads2.bam \\
-  --algorithm edlib \\
-  --fraction 0.05 \\
-  --tick 2 \\
-  --threads 0
+cargo build --release
 ```
 
-Press **q** to quit the live dashboard.
+## Quick start
+
+```bash
+porkchop list-kits
+porkchop describe-kit --kit LSK114
+porkchop screen --files reads.fastq.gz --fraction 0.05 --tick 2 --max-dist 2
+porkchop screen --files reads.fastq.gz --json screen_summary.json
+```
+
+### Exit keys
+
+- Press **q** to quit immediately.
+
+---
+
+## JSON output
+
+```json
+[
+  { "id": "NB_flank_fwd + NB_flank_rev5 + BC25", "count": 1249 }
+]
+```
+
+---
+
+## License
+
+MPL-2.0

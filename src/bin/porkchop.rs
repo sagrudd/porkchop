@@ -56,6 +56,7 @@ enum Commands {
         algorithm: String,
         /// Edit-distance threshold (default: 24)
         #[arg(long, default_value_t = 24)]
+        #[arg(long, default_value_t = 2)]
         max_dist: usize,
         /// Fraction of reads to sample (0.0-1.0; default 0.05)
         #[arg(long, default_value_t = 0.05)]

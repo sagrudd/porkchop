@@ -116,7 +116,7 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
             // Tally individual hits
             {
                 let mut g = unit_w.lock().unwrap();
-                for (name, kind, _is_rc) in &hits {
+                for (name, kind, _is_rc, _pos) in &hits {
                     *g.entry((name.clone(), *kind)).or_insert(0) += 1;
                 }
             }
@@ -124,15 +124,17 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
             // Compose aggregate identifier for this read: e.g., "NB_flank_fwd + 16S_rev_target"
             let mut labels: Vec<String> = Vec::new();
             let mut seen = HashSet::new();
-            for (name, kind, is_rc) in hits {
+            for (name, kind, is_rc, pos) in hits {
                 let orient = if is_rc { "rev" } else { "fwd" };
-                let leaf = format!("{}_{}_{}", name, orient, kind_suffix(kind));
+                let leaf = name;
                 if seen.insert(leaf.clone()) {
                     labels.push(leaf);
                 }
             }
             labels.sort();
-            let combo = labels.join(" + ");
+            let mut labels_pos: Vec<(usize, String)> = labels.into_iter().map(|s| (0usize, s)).collect();
+labels_pos.sort_by_key(|(p, _)| *p);
+let combo = labels_pos.into_iter().map(|(_, s)| s).collect::<Vec<_>>().join(" + ");
 
             {
                 let mut g = combo_w.lock().unwrap();
