@@ -299,17 +299,98 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
 
     done.store(true, Ordering::SeqCst);
     std::thread::sleep(Duration::from_millis(150));
+    
     if let Some(path) = &opts.json {
+        // contexts (aggregate identifiers)
         let entries: Vec<(String, usize)> = {
             let g = combo_tally.lock().unwrap();
             let mut v: Vec<(String, usize)> = g.iter().map(|(k,v)| (k.clone(), *v)).collect();
             v.sort_by(|a,b| b.1.cmp(&a.1));
             v
         };
-        let arr: Vec<serde_json::Value> = entries.into_iter().map(|(id, count)| serde_json::json!({"id": id, "count": count})).collect();
+        let contexts: Vec<serde_json::Value> = entries.into_iter()
+            .map(|(id, count)| serde_json::json!({"id": id, "count": count}))
+            .collect();
+
+        // predicted kits table -> JSON
+        // predicted kits table -> JSON
+        let kits_json: Vec<serde_json::Value> = if let Ok(unit_map) = unit_tally.lock() {
+            if let Ok(df) = infer_kits_df(&*unit_map) {
+                use polars::prelude::AnyValue;
+                let c_kit = df.column("kit").ok();
+                let c_desc = df.column("description").ok();
+                let c_chem = df.column("chemistry").ok();
+                let c_score = df.column("score").ok();
+                let c_prob = df.column("probability").ok();
+                let c_matched = df.column("matched_motifs").ok();
+                let c_total = df.column("total_hits").ok();
+                let mut out = Vec::new();
+                for i in 0..df.height() {
+                    let kit_av = c_kit.as_ref().and_then(|s| s.get(i).ok()).unwrap_or(AnyValue::Null);
+                    let desc_av = c_desc.as_ref().and_then(|s| s.get(i).ok()).unwrap_or(AnyValue::Null);
+                    let chem_av = c_chem.as_ref().and_then(|s| s.get(i).ok()).unwrap_or(AnyValue::Null);
+                    let score_av = c_score.as_ref().and_then(|s| s.get(i).ok()).unwrap_or(AnyValue::Null);
+                    let prob_av = c_prob.as_ref().and_then(|s| s.get(i).ok()).unwrap_or(AnyValue::Null);
+                    let matched_av = c_matched.as_ref().and_then(|s| s.get(i).ok()).unwrap_or(AnyValue::Null);
+                    let total_av = c_total.as_ref().and_then(|s| s.get(i).ok()).unwrap_or(AnyValue::Null);
+                    let kit = kit_av.to_string();
+                    let desc = desc_av.to_string();
+                    let chem = chem_av.to_string();
+                    let score_f = match score_av {
+                        AnyValue::Float64(v) => v,
+                        AnyValue::Float32(v) => v as f64,
+                        AnyValue::Int64(v) => v as f64,
+                        AnyValue::Int32(v) => v as f64,
+                        AnyValue::UInt64(v) => v as f64,
+                        AnyValue::UInt32(v) => v as f64,
+                        _ => 0.0,
+                    };
+                    let prob_f = match prob_av {
+                        AnyValue::Float64(v) => v,
+                        AnyValue::Float32(v) => v as f64,
+                        AnyValue::Int64(v) => v as f64,
+                        AnyValue::Int32(v) => v as f64,
+                        AnyValue::UInt64(v) => v as f64,
+                        AnyValue::UInt32(v) => v as f64,
+                        _ => 0.0,
+                    };
+                    let matched_u = match matched_av {
+                        AnyValue::UInt64(v) => v,
+                        AnyValue::UInt32(v) => v as u64,
+                        AnyValue::Int64(v) => v as u64,
+                        AnyValue::Int32(v) => v as u64,
+                        _ => 0,
+                    };
+                    let total_u = match total_av {
+                        AnyValue::UInt64(v) => v,
+                        AnyValue::UInt32(v) => v as u64,
+                        AnyValue::Int64(v) => v as u64,
+                        AnyValue::Int32(v) => v as u64,
+                        _ => 0,
+                    };
+                    out.push(serde_json::json!({
+                        "kit": kit,
+                        "description": desc,
+                        "chemistry": chem,
+                        "score": score_f,
+                        "probability": prob_f,
+                        "matched_motifs": matched_u,
+                        "total_hits": total_u
+                    }));
+                }
+                out
+            } else { Vec::new() }
+        } else { Vec::new() };
+
+        // write a single object combining both sections
+        let combined = serde_json::json!({
+            "contexts": contexts,
+            "kits": kits_json
+        });
         let mut f = std::fs::File::create(path)?;
-        serde_json::to_writer_pretty(&mut f, &arr)?;
+        serde_json::to_writer_pretty(&mut f, &combined)?;
     }
+
     Ok(())
 }
 
@@ -441,5 +522,12 @@ fn tui_loop(
 
     disable_raw_mode()?;
     crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+    // After TUI exits, print predicted kits
+    if let Ok(unit_map) = unit.lock() {
+        if let Ok(df) = infer_kits_df(&*unit_map) {
+            println!("\nMost likely kits (probabilities from weighted evidence):");
+            println!("{:?}", df);
+        }
+    }
     Ok(())
 }
