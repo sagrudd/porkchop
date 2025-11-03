@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
 use std::time::{Duration, Instant};
 
@@ -23,26 +23,6 @@ pub struct ScreenOpts {
     pub max_dist: usize,
 }
 
-
-fn revcomp(seq: &str) -> String {
-    fn comp(b: u8) -> u8 {
-        match b {
-            b'A' | b'a' => b'T',
-            b'C' | b'c' => b'G',
-            b'G' | b'g' => b'C',
-            b'T' | b't' => b'A',
-            b'U' | b'u' => b'A',
-            b'N' | b'n' => b'N',
-            _ => b'N',
-        }
-    }
-    let mut out = Vec::with_capacity(seq.len());
-    for &b in seq.as_bytes().iter().rev() {
-        out.push(comp(b));
-    }
-    String::from_utf8(out).unwrap_or_default()
-}
-
 fn collect_all_sequences() -> Vec<crate::kit::SequenceRecord> {
     let mut v = Vec::new();
     for k in list_supported_kits() {
@@ -52,42 +32,64 @@ fn collect_all_sequences() -> Vec<crate::kit::SequenceRecord> {
     v
 }
 
+fn kind_suffix(k: SeqKind) -> &'static str {
+    match k {
+        SeqKind::Primer => "target",
+        SeqKind::Flank => "flank",
+        SeqKind::Barcode => "barcode",
+        SeqKind::AdapterTop | SeqKind::AdapterBottom => "adapter",
+    }
+}
+
 pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let records = Arc::new(collect_all_sequences());
 
-    let tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    // Tallies
+    let unit_tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let combo_tally: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
     let done = Arc::new(AtomicBool::new(false));
     let screened = Arc::new(AtomicUsize::new(0));
     let unclassified = Arc::new(AtomicUsize::new(0));
     let skipped = Arc::new(AtomicUsize::new(0));
-// UI thread
-    let tally_ui = tally.clone();
+
+    // Optional prebuilt for ACMyers
+    let prebuilt = if let BenchmarkAlgo::ACMyers = opts.algo {
+        Some(Arc::new(benchmark::prebuild_for(records.as_slice())))
+    } else {
+        None
+    };
+
+    // UI thread
+    let unit_ui = unit_tally.clone();
+    let combo_ui = combo_tally.clone();
     let done_ui = done.clone();
     let screened_ui = screened.clone();
     let unclassified_ui = unclassified.clone();
     let skipped_ui = skipped.clone();
-let tick = Duration::from_secs(opts.tick_secs.max(1));
+    let tick = Duration::from_secs(opts.tick_secs.max(1));
     std::thread::spawn(move || {
-        let _ = tui_loop(tally_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, tick);
+        let _ = tui_loop(unit_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, tick);
     });
 
     // Sampling params
     let p = opts.fraction.clamp(0.0, 1.0);
     let threads = opts.threads;
 
-    // Process each file with seqio::for_each_parallel
     for file in &opts.files {
         let file = file.clone();
-        let tally_w = tally.clone();
+        let unit_w = unit_tally.clone();
+        let combo_w = combo_tally.clone();
         let algo = opts.algo;
         let records_arc = records.clone();
+        let prebuilt_c = prebuilt.clone();
         let md = opts.max_dist;
         let p_sample = p;
         let done_c = done.clone();
         let screened_c = screened.clone();
         let unclassified_c = unclassified.clone();
         let skipped_c = skipped.clone();
-let _ = for_each_parallel(file, threads, move |read| {
+
+        let _ = for_each_parallel(file, threads, move |read| {
             if done_c.load(Ordering::SeqCst) { return; }
 
             // Bernoulli(p) sampling via deterministic hash of read id
@@ -100,15 +102,42 @@ let _ = for_each_parallel(file, threads, move |read| {
             };
             if !take { skipped_c.fetch_add(1, Ordering::Relaxed); return; }
 
-            // Count as 'screened' only when sampled and assessed
-            screened_c.fetch_add(1, Ordering::Relaxed);
+            // Enumerate all motif hits for this read using requested algorithm
+            let hits = benchmark::classify_all(algo, &read.seq, records_arc.as_slice(), prebuilt_c.as_deref(), md);
 
-            if let Some(hit) = benchmark::classify_best(algo, &read.seq, records_arc.as_slice(), md) {
-            let mut g = tally_w.lock().unwrap();
-            *g.entry((hit.name, hit.kind)).or_insert(0) += 1;
-        } else {
-            unclassified_c.fetch_add(1, Ordering::Relaxed);
+            if hits.is_empty() {
+                screened_c.fetch_add(1, Ordering::Relaxed);
+                unclassified_c.fetch_add(1, Ordering::Relaxed);
+                return;
             }
+
+            // Tally individual hits
+            {
+                let mut g = unit_w.lock().unwrap();
+                for (name, kind, _is_rc) in &hits {
+                    *g.entry((name.clone(), *kind)).or_insert(0) += 1;
+                }
+            }
+
+            // Compose aggregate identifier for this read: e.g., "NB_flank_fwd + 16S_rev_target"
+            let mut labels: Vec<String> = Vec::new();
+            let mut seen = HashSet::new();
+            for (name, kind, is_rc) in hits {
+                let orient = if is_rc { "rev" } else { "fwd" };
+                let leaf = format!("{}_{}_{}", name, orient, kind_suffix(kind));
+                if seen.insert(leaf.clone()) {
+                    labels.push(leaf);
+                }
+            }
+            labels.sort();
+            let combo = labels.join(" + ");
+
+            {
+                let mut g = combo_w.lock().unwrap();
+                *g.entry(combo).or_insert(0) += 1;
+            }
+
+            screened_c.fetch_add(1, Ordering::Relaxed);
         });
     }
 
@@ -118,7 +147,8 @@ let _ = for_each_parallel(file, threads, move |read| {
 }
 
 fn tui_loop(
-    tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
+    unit: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
+    combos: Arc<Mutex<HashMap<String, usize>>>,
     done: Arc<AtomicBool>,
     screened: Arc<AtomicUsize>,
     unclassified: Arc<AtomicUsize>,
@@ -134,15 +164,14 @@ fn tui_loop(
     let start = Instant::now();
 
     loop {
-        // Draw dashboard
         terminal.draw(|f| {
             let size = f.size();
             let block = Block::default().title("porkchop::screen — observed synthetic sequences").borders(Borders::ALL);
             f.render_widget(block, size);
 
-            // Stats line
+            // Header stats
             let hits_sum: usize = {
-                let g = tally.lock().unwrap();
+                let g = unit.lock().unwrap();
                 g.values().sum()
             };
             let scr = screened.load(Ordering::Relaxed) as f64;
@@ -154,22 +183,22 @@ fn tui_loop(
             let up = if scr > 0.0 { 100.0 * uncls / scr } else { 0.0 };
             let sp = if tot_seen > 0.0 { 100.0 * skip / tot_seen } else { 0.0 };
             let stats = format!(
-    "screened: {}  hits: {} ({:.1}%)  unclassified: {} ({:.1}%)    skipped (not sampled): {} ({:.1}%)",
-    scr as u64, hits_sum as u64, hp, unclassified.load(Ordering::Relaxed), up, skipped.load(Ordering::Relaxed), sp
-);
-let stats_para = ratatui::widgets::Paragraph::new(stats);
+                "screened: {}  hits: {} ({:.1}%)  unclassified: {} ({:.1}%)    skipped (not sampled): {} ({:.1}%)",
+                scr as u64, hits_sum as u64, hp, unclassified.load(Ordering::Relaxed), up, skipped.load(Ordering::Relaxed), sp
+            );
+            let stats_para = ratatui::widgets::Paragraph::new(stats);
             let stats_area = Rect::new(size.x + 2, size.y + 1, size.width.saturating_sub(4), 1);
             f.render_widget(stats_para, stats_area);
 
-            // Top-k table
-            let mut rows: Vec<Row> = Vec::new();
-            let mut items: Vec<(String, SeqKind, usize)> = {
-                let g = tally.lock().unwrap();
+            // Top individual sequences (name, kind, count)
+            let mut unit_rows: Vec<Row> = Vec::new();
+            let mut unit_items: Vec<(String, SeqKind, usize)> = {
+                let g = unit.lock().unwrap();
                 g.iter().map(|((name, kind), c)| (name.clone(), *kind, *c)).collect()
             };
-            items.sort_by(|a, b| b.2.cmp(&a.2));
-            for (name, kind, c) in items.into_iter().take(20) {
-                rows.push(Row::new(vec![
+            unit_items.sort_by(|a, b| b.2.cmp(&a.2));
+            for (name, kind, c) in unit_items.into_iter().take(12) {
+                unit_rows.push(Row::new(vec![
                     name,
                     match kind {
                         SeqKind::AdapterTop | SeqKind::AdapterBottom => "Adapter".to_string(),
@@ -180,26 +209,45 @@ let stats_para = ratatui::widgets::Paragraph::new(stats);
                     format!("{}", c),
                 ]));
             }
-
-            let table = Table::new(
-                rows,
+            let unit_table = Table::new(
+                unit_rows,
                 [Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)]
             )
                 .header(Row::new(vec!["name", "kind", "count"]).bold())
                 .block(Block::default().borders(Borders::ALL).title("Top synthetic sequences"));
 
-            let area = Rect::new(size.x + 2, size.y + 3, size.width.saturating_sub(4), size.height.saturating_sub(5));
-            f.render_widget(table, area);
+            // Top combos table (aggregate identifiers)
+            let mut combo_rows: Vec<Row> = Vec::new();
+            let mut combo_items: Vec<(String, usize)> = {
+                let g = combos.lock().unwrap();
+                g.iter().map(|(k, v)| (k.clone(), *v)).collect()
+            };
+            combo_items.sort_by(|a, b| b.1.cmp(&a.1));
+            for (id, c) in combo_items.into_iter().take(12) {
+                combo_rows.push(Row::new(vec![id, format!("{}", c)]));
+            }
+            let combo_table = Table::new(
+                combo_rows,
+                [Constraint::Percentage(75), Constraint::Percentage(25)]
+            )
+                .header(Row::new(vec!["aggregate identifier", "count"]).bold())
+                .block(Block::default().borders(Borders::ALL).title("Top co-occurrence contexts"));
 
-        // Footer: rate per second (screened)
-        let elapsed = start.elapsed().as_secs_f64().max(1e-6);
-        let rate = (screened.load(Ordering::Relaxed) as f64) / elapsed;
-        let footer = ratatui::widgets::Paragraph::new(format!("rate: {:.1} screened/s", rate));
-        let farea = Rect::new(size.x + 2, size.y + size.height.saturating_sub(2), size.width.saturating_sub(4), 1);
-        f.render_widget(footer, farea);
+            // Layout: header line + two stacked tables + footer
+            let unit_area = Rect::new(size.x + 2, size.y + 3, size.width.saturating_sub(4), (size.height.saturating_sub(7)) / 2);
+            let combo_area = Rect::new(size.x + 2, unit_area.y + unit_area.height, size.width.saturating_sub(4), (size.height.saturating_sub(7)) - unit_area.height);
+            f.render_widget(unit_table, unit_area);
+            f.render_widget(combo_table, combo_area);
+
+            // Footer rate
+            let elapsed = start.elapsed().as_secs_f64().max(1e-6);
+            let rate = (screened.load(Ordering::Relaxed) as f64) / elapsed;
+            let footer = ratatui::widgets::Paragraph::new(format!("rate: {:.1} screened/s   (q/Esc to quit)", rate));
+            let farea = Rect::new(size.x + 2, size.y + size.height.saturating_sub(2), size.width.saturating_sub(4), 1);
+            f.render_widget(footer, farea);
         })?;
 
-        // Quit on 'q' or Esc: set cancel flag, restore terminal, exit process
+        // Quit on 'q' or Esc
         if event::poll(tick)? {
             if let Event::Key(k) = event::read()? {
                 if k.code == KeyCode::Char('q') || k.code == KeyCode::Esc {

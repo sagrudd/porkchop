@@ -110,19 +110,20 @@ fn revcomp_bytes(seq: &[u8]) -> Vec<u8> {
     out
 }
 
-pub struct Prebuilt<'a> {
-    pub records: &'a [SequenceRecord],
+pub struct Prebuilt {
+    pub records: Arc<Vec<SequenceRecord>>,
     pub ac: AhoCorasick,
     pub pat2rec: Vec<usize>,
     pub pat_is_rc: Vec<bool>,
 }
 
 /// Build an `AhoCorasick` automaton across all kit motifs.
-pub fn prebuild_for<'a>(records: &'a [SequenceRecord]) -> Prebuilt<'a> {
+pub fn prebuild_for(records: &[SequenceRecord]) -> Prebuilt {
     let mut pats: Vec<Vec<u8>> = Vec::new();
     let mut pat2rec: Vec<usize> = Vec::new();
     let mut pat_is_rc: Vec<bool> = Vec::new();
-    for (i, r) in records.iter().enumerate() {
+    let owned: Arc<Vec<SequenceRecord>> = Arc::new(records.to_vec());
+    for (i, r) in owned.iter().enumerate() {
         let fwd = r.sequence.as_bytes().to_vec();
         pats.push(fwd); pat2rec.push(i); pat_is_rc.push(false);
         let rc = revcomp_bytes(r.sequence.as_bytes());
@@ -133,7 +134,7 @@ pub fn prebuild_for<'a>(records: &'a [SequenceRecord]) -> Prebuilt<'a> {
         .kind(Some(AhoCorasickKind::DFA))
         .build(pat_refs)
         .expect("failed to build Aho-Corasick automaton");
-    Prebuilt { records, ac, pat2rec, pat_is_rc }
+    Prebuilt { records: owned, ac, pat2rec, pat_is_rc }
 }
 
 /// Return the best label according to the requested algorithm.
@@ -186,7 +187,7 @@ fn ac_myers_best(seq: &[u8], pre: &Prebuilt, max_dist: usize) -> Option<LabelHit
         let pid = m.pattern();
         if !seen.insert(pid) { continue; }
         let ridx = pre.pat2rec[pid];
-        let r = &pre.records[ridx];
+        let r = &&pre.records[ridx];
         let pat_bytes: Vec<u8> = if pre.pat_is_rc[pid] {
             revcomp_bytes(r.sequence.as_bytes())
         } else { r.sequence.as_bytes().to_vec() };
@@ -344,4 +345,104 @@ impl std::fmt::Display for BenchmarkAlgo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+
+pub fn classify_all(
+    algo: BenchmarkAlgo,
+    seq: &[u8],
+    records: &[SequenceRecord],
+    prebuilt: Option<&Prebuilt>,
+    max_dist: usize,
+) -> Vec<(String, SeqKind, bool)> {
+    let mut out: Vec<(String, SeqKind, bool)> = Vec::new();
+    match algo {
+        BenchmarkAlgo::ACMyers => {
+            if let Some(pre) = prebuilt {
+                let mut seen = std::collections::HashSet::new();
+                for m in pre.ac.find_iter(seq) {
+                    let pid = m.pattern();
+                    if !seen.insert(pid) { continue; }
+                    let ridx = pre.pat2rec[pid];
+                    let is_rc = pre.pat_is_rc[pid];
+                    let r = &pre.records[ridx];
+                    let pat_bytes: Vec<u8> = if is_rc {
+                        revcomp_bytes(r.sequence.as_bytes())
+                    } else {
+                        r.sequence.as_bytes().to_vec()
+                    };
+                    let mut my: Myers<u64> = MyersBuilder::new().build_64(pat_bytes.into_iter());
+                    if let Some((_s, _e, dist)) = my.find_all(seq, max_dist as u8).next() {
+                        let _ = dist;
+                        out.push((r.name.to_string(), r.kind, is_rc));
+                    }
+                }
+            }
+        }
+        BenchmarkAlgo::Myers => {
+            for r in records {
+                // forward
+                let mut m: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
+                if let Some((_s,_e,dist)) = m.find_all(seq, max_dist as u8).next() {
+                    let _ = dist;
+                    out.push((r.name.to_string(), r.kind, false));
+                    continue;
+                }
+                // reverse-complement motif
+                let rc = revcomp_bytes(r.sequence.as_bytes());
+                let mut mrc: Myers<u64> = MyersBuilder::new().build_64(rc.into_iter());
+                if let Some((_s,_e,dist)) = mrc.find_all(seq, max_dist as u8).next() {
+                    let _ = dist;
+                    out.push((r.name.to_string(), r.kind, true));
+                }
+            }
+        }
+        BenchmarkAlgo::Edlib => {
+            unsafe {
+                for r in records {
+                    let mut cfg: EdlibAlignConfig = edlibDefaultAlignConfig();
+                    cfg.mode = EdlibAlignMode_EDLIB_MODE_HW; // semiglobal (end-free)
+                    cfg.task = EdlibAlignTask_EDLIB_TASK_DISTANCE;
+                    cfg.k = max_dist as i32;
+
+                    // forward
+                    let q = r.sequence.as_bytes();
+                    let res = edlibAlign(q.as_ptr() as *const i8, q.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
+                    let mut matched = false;
+                    if res.editDistance >= 0 {
+                        out.push((r.name.to_string(), r.kind, false));
+                        matched = true;
+                    }
+                    edlibFreeAlignResult(res);
+
+                    if !matched {
+                        let rc = revcomp_bytes(r.sequence.as_bytes());
+                        let res2 = edlibAlign(rc.as_ptr() as *const i8, rc.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
+                        if res2.editDistance >= 0 {
+                            out.push((r.name.to_string(), r.kind, true));
+                        }
+                        edlibFreeAlignResult(res2);
+                    }
+                }
+            }
+        }
+        BenchmarkAlgo::Parasail => {
+            // Fallback: behave like Myers (forward + RC motifs), do not RC the read
+            for r in records {
+                let mut m: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
+                if let Some((_s,_e,dist)) = m.find_all(seq, max_dist as u8).next() {
+                    let _ = dist;
+                    out.push((r.name.to_string(), r.kind, false));
+                    continue;
+                }
+                let rc = revcomp_bytes(r.sequence.as_bytes());
+                let mut mrc: Myers<u64> = MyersBuilder::new().build_64(rc.into_iter());
+                if let Some((_s,_e,dist)) = mrc.find_all(seq, max_dist as u8).next() {
+                    let _ = dist;
+                    out.push((r.name.to_string(), r.kind, true));
+                }
+            }
+        }
+    }
+    out
 }
