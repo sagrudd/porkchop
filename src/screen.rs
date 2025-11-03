@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
+use std::time::Duration;
 
 use crate::benchmark::{self, BenchmarkAlgo};
 use crate::kit::SeqKind;
@@ -37,13 +37,17 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
 
     let tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
     let done = Arc::new(AtomicBool::new(false));
+    let total_scanned = Arc::new(AtomicUsize::new(0));
+    let unclassified = Arc::new(AtomicUsize::new(0));
 
     // UI thread
     let tally_ui = tally.clone();
     let done_ui = done.clone();
+    let total_ui = total_scanned.clone();
+    let unclassified_ui = unclassified.clone();
     let tick = Duration::from_secs(opts.tick_secs.max(1));
     std::thread::spawn(move || {
-        let _ = tui_loop(tally_ui, done_ui, tick);
+        let _ = tui_loop(tally_ui, done_ui, total_ui, unclassified_ui, tick);
     });
 
     // Sampling params
@@ -58,8 +62,13 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
         let records_arc = records.clone();
         let md = opts.max_dist;
         let p_sample = p;
-
+        let done = done.clone();
+        let total_scanned = total_scanned.clone();
+        let unclassified = unclassified.clone();
         let _ = for_each_parallel(file, threads, move |read| {
+
+            if done.load(Ordering::SeqCst) { return; }
+            total_scanned.fetch_add(1, Ordering::Relaxed);
             // Bernoulli(p) sampling via deterministic hash of read id
             let take = if p_sample >= 1.0 {
                 true
@@ -73,6 +82,8 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
             if let Some(hit) = benchmark::classify_best(algo, &read.seq, records_arc.as_slice(), md) {
                 let mut g = tally_w.lock().unwrap();
                 *g.entry((hit.name, hit.kind)).or_insert(0) += 1;
+            } else {
+                unclassified.fetch_add(1, Ordering::Relaxed);
             }
         });
     }
@@ -82,7 +93,7 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn tui_loop(tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>>, done: Arc<AtomicBool>, tick: Duration) -> anyhow::Result<()> {
+fn tui_loop(tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>>, done: Arc<AtomicBool>, total: Arc<AtomicUsize>, unclassified: Arc<AtomicUsize>, tick: Duration) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
@@ -95,6 +106,10 @@ loop {
             let block = Block::default().title("porkchop::screen — observed synthetic sequences").borders(Borders::ALL);
             f.render_widget(block, size);
             let _inner = Rect::new(size.x+1, size.y+1, size.width.saturating_sub(2), size.height.saturating_sub(2));
+            let stats = format!("scanned: {}   unclassified: {}", total.load(Ordering::Relaxed), unclassified.load(Ordering::Relaxed));
+            let stats_para = ratatui::widgets::Paragraph::new(stats);
+            let stats_area = Rect::new(size.x+2, size.y+1, size.width.saturating_sub(4), 1);
+            f.render_widget(stats_para, stats_area);
             let mut rows: Vec<Row> = Vec::new();
             let mut items: Vec<(String, SeqKind, usize)> = {
                 let g = tally.lock().unwrap();
@@ -116,9 +131,9 @@ loop {
             let table = Table::new(rows, [Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)])
                 .header(Row::new(vec!["name","kind","count"]).bold())
                 .block(Block::default().borders(Borders::ALL).title("Top synthetic sequences"));
-            let area = Rect::new(size.x+2, size.y+2, size.width.saturating_sub(4), size.height.saturating_sub(4));
+            let area = Rect::new(size.x+2, size.y+3, size.width.saturating_sub(4), size.height.saturating_sub(5));
             f.render_widget(table, area);
-        })?;
+})?;
 
         // Exit on 'q' or ESC; otherwise tick refresh
         if event::poll(tick)? {
