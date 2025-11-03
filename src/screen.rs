@@ -12,6 +12,7 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Row, Table};
+use serde_json;
 
 #[derive(Debug, Clone)]
 pub struct ScreenOpts {
@@ -21,6 +22,7 @@ pub struct ScreenOpts {
     pub tick_secs: u64,
     pub algo: BenchmarkAlgo,
     pub max_dist: usize,
+    pub json: Option<String>,
 }
 
 fn collect_all_sequences() -> Vec<crate::kit::SequenceRecord> {
@@ -143,6 +145,17 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
 
     done.store(true, Ordering::SeqCst);
     std::thread::sleep(Duration::from_millis(150));
+    if let Some(path) = &opts.json {
+        let entries: Vec<(String, usize)> = {
+            let g = combo_tally.lock().unwrap();
+            let mut v: Vec<(String, usize)> = g.iter().map(|(k,v)| (k.clone(), *v)).collect();
+            v.sort_by(|a,b| b.1.cmp(&a.1));
+            v
+        };
+        let arr: Vec<serde_json::Value> = entries.into_iter().map(|(id, count)| serde_json::json!({"id": id, "count": count})).collect();
+        let mut f = std::fs::File::create(path)?;
+        serde_json::to_writer_pretty(&mut f, &arr)?;
+    }
     Ok(())
 }
 

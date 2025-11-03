@@ -66,6 +66,9 @@ enum Commands {
         /// Threads (0/None = all)
         #[arg(long)]
         threads: Option<usize>,
+        /// Write aggregate identifiers and counts to JSON file
+        #[arg(long)]
+        json: Option<String>,
     },
 }
 
@@ -143,7 +146,7 @@ let truth_map = match truth {
             }
         }
 
-        Commands::Screen { files, algorithm, max_dist, fraction, tick, threads } => {
+        Commands::Screen { files, algorithm, max_dist, fraction, tick, threads, json } => {
             let algo = match algorithm.parse::<porkchop::benchmark::BenchmarkAlgo>() {
                 Ok(a) => a,
                 Err(_) => porkchop::benchmark::BenchmarkAlgo::Edlib,
@@ -155,6 +158,7 @@ let truth_map = match truth {
                 tick_secs: tick,
                 algo,
                 max_dist,
+                json,
             };
             if let Err(e) = porkchop::screen::run_screen(opts) {
                 eprintln!("screen error: {e}");

@@ -2159,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "porkchop"
-version = "0.2.56"
+version = "0.2.60"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2174,6 +2174,8 @@ dependencies = [
  "ratatui",
  "rayon",
  "rust-htslib",
+ "serde",
+ "serde_json",
  "sysinfo 0.30.13",
 ]
 
