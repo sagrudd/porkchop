@@ -17,6 +17,7 @@
 pub mod kit;
 pub mod kits;
 pub mod seqio;
+pub mod screen;
 /// Benchmarking framework.
 pub mod benchmark;
 

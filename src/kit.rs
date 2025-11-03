@@ -10,7 +10,7 @@ pub struct Provenance {
 }
 
 /// High-level category of sequence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SeqKind {
     AdapterTop,
     AdapterBottom,
@@ -54,22 +54,14 @@ pub struct Kit {
 }
 
 
-
-// === Auto-added: canonical labels for BaseChemistry ===
-impl BaseChemistry {
-    /// Canonical human-readable label for display/export.
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Rapid => "rapid sequencing",
-            Self::Ligation => "ligation sequencing",
-            Self::PCRcDNA => "PCR-cDNA sequencing",
-            Self::Amplicon => "amplicon sequencing",
-        }
-    }
-}
-
 impl std::fmt::Display for BaseChemistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.label())
+        let s = match self {
+            BaseChemistry::Rapid => "rapid sequencing",
+            BaseChemistry::Ligation => "ligation sequencing",
+            BaseChemistry::PCRcDNA => "pcr-cdna sequencing",
+            BaseChemistry::Amplicon => "amplicon sequencing",
+        };
+        write!(f, "{}", s)
     }
 }

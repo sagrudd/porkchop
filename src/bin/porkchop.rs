@@ -1,221 +1,205 @@
-
 use clap::{Parser, Subcommand};
 use polars::prelude::*;
 
-#[derive(Debug, Parser)]
-#[command(name="porkchop")]
-#[command(about="ONT adapters/primers/barcodes utilities")]
+/// Porkchop CLI
+#[derive(Parser)]
+#[command(name = "porkchop")]
+#[command(version)]
+#[command(about = "ONP kit registry, IO and benchmarking", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum Commands {
-    /// List all kits known to porkchop
+    /// List all supported kits
     ListKits,
-    /// Describe all sequences and barcodes for a kit (no truncation; includes provenance)
-    DescribeKit {
-        /// Kit id (e.g., LSK114, PCS114, NBD114.24)
-        #[arg(long, required=true)]
-        kit: String,
-        /// Emit CSV instead of table
-        #[arg(long, action=clap::ArgAction::SetTrue)]
-        csv: bool,
+
+    /// Describe a kit by id (e.g., "LSK114")
+    Describe {
+        /// Kit id to describe
+        id: String,
     },
-    /// Benchmark classification algorithms against a truth set (optional).
+
+    /// Benchmark classification algorithms against an optional truth set
     Benchmark {
-        /// Input files (FASTQ/FASTQ.GZ/SAM/BAM)
-        #[arg(required=true)]
+        /// Input files (FASTQ/FASTA/FASTQ.GZ/SAM/BAM)
+        #[arg(required = true)]
         files: Vec<String>,
-        /// Kit ID (e.g., LSK114, PCS114, NBD114.24)
-        #[arg(long, required=true)]
+        /// Kit id (e.g., "LSK114")
         kit: String,
-        /// Optional truth set CSV with columns: read_id, expected_labels, [kind]
+        /// Truth CSV (optional)
         #[arg(long)]
         truth: Option<String>,
-        /// BenchmarkAlgo list (comma-separated): aho,myers,edlib,parasail,ac+myers,ac+parasail
-        #[arg(long, default_value = "aho,myers,edlib,parasail,ac+myers,ac+parasail")]
+        /// Comma-separated algorithms (edlib,myers,acmyers). Default handled in code.
+        #[arg(long, default_value = "edlib,myers,acmyers")]
         algorithms: String,
-        /// Max edit distance for approximate matchers
-        #[arg(long, default_value_t = 5)]
+        /// Edit-distance threshold
+        #[arg(long, default_value_t = 24)]
         max_dist: usize,
-        /// Threads to use (defaults to all cores)
+        /// Threads (0/None = all)
         #[arg(long)]
         threads: Option<usize>,
-        /// Emit CSV instead of pretty table
-        #[arg(long, action=clap::ArgAction::SetTrue)]
+        /// Emit CSV to stdout
+        #[arg(long)]
         csv: bool,
+    },
+
+    /// Screen a dataset to infer library chemistry by scoring adapters/primers/barcodes
+    Screen {
+        /// Input files (FASTQ/FASTQ.GZ/SAM/BAM)
+        #[arg(required = true)]
+        files: Vec<String>,
+        /// Algorithm (default: edlib)
+        #[arg(long, default_value = "edlib")]
+        algorithm: String,
+        /// Edit-distance threshold (default: 24)
+        #[arg(long, default_value_t = 24)]
+        max_dist: usize,
+        /// Fraction of reads to sample (0.0-1.0; default 0.05)
+        #[arg(long, default_value_t = 0.05)]
+        fraction: f64,
+        /// UI refresh in seconds (default: 2)
+        #[arg(long, default_value_t = 2)]
+        tick: u64,
+        /// Threads (0/None = all)
+        #[arg(long)]
+        threads: Option<usize>,
     },
 }
 
 fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
+
     match cli.command {
-        Commands::ListKits => cmd_list_kits(),
-        Commands::DescribeKit { kit, csv } => cmd_describe(&kit, csv),
+        Commands::ListKits => {
+            cmd_list_kits();
+        }
+
+        Commands::Describe { id } => {
+            cmd_describe(id);
+        }
+
         Commands::Benchmark { files, kit, truth, algorithms, max_dist, threads, csv } => {
-            cmd_benchmark(&files, &kit, truth.as_deref(), &algorithms, max_dist, threads, csv)
+            use porkchop::benchmark::{self, BenchmarkAlgo};
+
+            let algorithms = algorithms.to_lowercase();
+            let algos = BenchmarkAlgo::from_list(algorithms.as_str());
+
+            let mut rows = Vec::new();
+let truth_map = match truth {
+                Some(p) => benchmark::load_truth(p).ok(),
+                None => None,
+            };
+
+            for file in files {
+                for algo in &algos {
+                    let kit_ref = match porkchop::get_sequences_for_kit(kit.as_str()) {
+                        Some(k) => k,
+                        None => {
+                            return Err(polars::prelude::PolarsError::ComputeError(
+                                format!("Unknown kit: {}", kit).into(),
+                            ));
+                        }
+                    };
+
+                    let (tp, fp, fn_, dur, nseq, cpu, _input_format) =
+                        benchmark::benchmark_file(file.clone(), kit_ref, *algo, truth_map.clone(), threads, max_dist)
+                        .map_err(|e| polars::prelude::PolarsError::ComputeError(e.to_string().into()))?;
+
+                    rows.push((
+                        file.clone(),
+                        algo.as_str().to_string(),
+                        tp,
+                        fp,
+                        fn_,
+                        dur.as_millis(),
+                        nseq,
+                        cpu,
+                        threads.unwrap_or(0),
+                    ));
+                }
+            }
+
+            if csv {
+                let mut df = df!(
+                    "file"        => rows.iter().map(|r| r.0.clone()).collect::<Vec<_>>(),
+                    "algorithm"   => rows.iter().map(|r| r.1.clone()).collect::<Vec<_>>(),
+                    "tp"          => rows.iter().map(|r| r.2 as u64).collect::<Vec<_>>(),
+                    "fp"          => rows.iter().map(|r| r.3 as u64).collect::<Vec<_>>(),
+                    "fn"          => rows.iter().map(|r| r.4 as u64).collect::<Vec<_>>(),
+                    "elapsed_ms"  => rows.iter().map(|r| r.5 as u64).collect::<Vec<_>>(),
+                    "nseq"        => rows.iter().map(|r| r.6 as u64).collect::<Vec<_>>(),
+                    "cpu"         => rows.iter().map(|r| r.7 as f32).collect::<Vec<_>>(),
+                    "threads"     => rows.iter().map(|r| r.8 as u64).collect::<Vec<_>>(),
+                )?;
+                let w = CsvWriter::new(std::io::stdout());
+                w.include_header(true).finish(&mut df)?;
+            } else {
+                for (file, algo, tp, fp, fn_, dur, nseq, cpu, threads) in rows {
+                    println!("{file}\t{algo}\tTP={tp}\tFP={fp}\tFN={fn_}\tms={dur}\tN={nseq}\tcpu={cpu}\tthreads={threads}");
+                }
+            }
+        }
+
+        Commands::Screen { files, algorithm, max_dist, fraction, tick, threads } => {
+            let algo = match algorithm.parse::<porkchop::benchmark::BenchmarkAlgo>() {
+                Ok(a) => a,
+                Err(_) => porkchop::benchmark::BenchmarkAlgo::Edlib,
+            };
+            let opts = porkchop::screen::ScreenOpts {
+                files,
+                threads,
+                fraction,
+                tick_secs: tick,
+                algo,
+                max_dist,
+            };
+            if let Err(e) = porkchop::screen::run_screen(opts) {
+                eprintln!("screen error: {e}");
+            }
         }
     }
+
+    Ok(())
 }
 
-fn cmd_list_kits() -> polars::prelude::PolarsResult<()> {
-    let kits = porkchop::list_supported_kits();
-    let ids: Vec<&str> = kits.iter().map(|k| k.id.0).collect();
-    let desc: Vec<&str> = kits.iter().map(|k| k.description).collect();
-    let legacy: Vec<bool> = kits.iter().map(|k| porkchop::kit_is_legacy(k)).collect();
-    let chemistry: Vec<&str> = kits.iter().map(|k| match porkchop::base_chemistry_of(k) {
-        porkchop::BaseChemistry::Rapid => "Rapid",
-        porkchop::BaseChemistry::Ligation => "Ligation",
-        porkchop::BaseChemistry::PCRcDNA => "PCRcDNA",
-        porkchop::BaseChemistry::Amplicon => "Amplicon",
-    }).collect();
+fn cmd_list_kits() {
+    use porkchop::{list_supported_kits};
 
-    let mut df = df!(
+    let kits = list_supported_kits();
+    let ids: Vec<String> = kits.iter().map(|k| k.id.0.to_string()).collect();
+    let descs: Vec<String> = kits.iter().map(|k| k.description.to_string()).collect();
+    let legacy: Vec<bool> = kits.iter().map(|k| k.legacy).collect();
+    let chems: Vec<String> = kits.iter().map(|k| k.chemistry.to_string().to_string()).collect();
+
+    let df = df!(
         "kit" => ids,
-        "description" => desc,
+        "description" => descs,
         "legacy" => legacy,
-        "chemistry" => kits.iter().map(|k| k.chemistry.to_string()).collect::<Vec<String>>()
-    )?;
+        "chemistry" => chems,
+    ).expect("dataframe");
 
-    print_table(&df);
-    Ok(())
+    // Pretty-print as CSV to stdout
+    let mut w = CsvWriter::new(std::io::stdout());
+    w.include_header(true).finish(&mut df.clone()).expect("write csv");
 }
 
-fn cmd_describe(kit: &str, as_csv: bool) -> polars::prelude::PolarsResult<()> {
-    let k = porkchop::get_sequences_for_kit(kit).ok_or_else(|| PolarsError::ComputeError(format!("Unknown kit: {}", kit).into()))?;
+fn cmd_describe(id: String) {
+    use porkchop::{get_sequences_for_kit, base_chemistry_of, kit_is_legacy};
 
-    let mut names = Vec::new();
-    let mut kinds = Vec::new();
-    let mut seqs = Vec::new();
-    let mut prov_src = Vec::new();
-    let mut prov_app = Vec::new();
-
-    for r in k.adapters_and_primers.iter().chain(k.barcodes.iter()) {
-        names.push(r.name);
-        kinds.push(match r.kind {
-            porkchop::SeqKind::AdapterTop => "AdapterTop",
-            porkchop::SeqKind::AdapterBottom => "AdapterBottom",
-            porkchop::SeqKind::Primer => "Primer",
-            porkchop::SeqKind::Barcode => "Barcode",
-            porkchop::SeqKind::Flank => todo!(),
-        });
-        seqs.push(r.sequence);
-        prov_src.push(r.provenance.source);
-        prov_app.push(r.provenance.appendix.unwrap_or(""));
-    }
-
-    let mut df = df!(
-        "name" => names,
-        "kind" => kinds,
-        "sequence" => seqs,
-        "provenance_source" => prov_src,
-        "provenance_appendix" => prov_app
-    )?;
-
-    if as_csv {
-        let w = CsvWriter::new(std::io::stdout());
-        w.include_header(true).finish(&mut df)?;
-    } else {
-        print_table(&df);
-    }
-    Ok(())
-}
-
-fn cmd_benchmark(
-    files: &Vec<String>,
-    kit: &str,
-    truth: Option<&str>,
-    algorithms: &str,
-    max_dist: usize,
-    threads: Option<usize>,
-    as_csv: bool
-) -> polars::prelude::PolarsResult<()> {
-    use porkchop::benchmark::{self, BenchmarkAlgo};
-
-    let kit_ref = match porkchop::get_sequences_for_kit(kit) {
-        Some(k) => k,
-        None => return Err(PolarsError::ComputeError(format!("Unknown kit: {}", kit).into())),
-    };
-    let truth_map = match truth { Some(p) => benchmark::load_truth(p).ok(), None => None };
-    let algos = BenchmarkAlgo::from_list(algorithms);
-
-    let mut rows: Vec<(String,String,u64,u64,u64,u128,usize,f32,usize)> = Vec::new();
-    for file in files {
-        for algo in &algos {
-            let (tp, fp, fn_, dur, nseq, cpu, _input_format) = benchmark::benchmark_file(file, kit_ref, *algo, truth_map.clone(), threads, max_dist)
-                .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-            rows.push((file.clone(), algo.as_str().to_string(), tp, fp, fn_, dur.as_millis(), nseq, cpu, threads.unwrap_or_else(num_cpus::get)));
+    match get_sequences_for_kit(id.as_str()) {
+        Some(kit) => {
+            println!("id: {}", kit.id.0);
+            println!("description: {}", kit.description);
+            println!("legacy: {}", kit_is_legacy(kit));
+            println!("chemistry: {}", base_chemistry_of(kit).to_string());
+            println!("adapters/primers: {}", kit.adapters_and_primers.len());
+            println!("barcodes: {}", kit.barcodes.len());
         }
-    }
-
-    let mut df = df!(
-        "file" => rows.iter().map(|r| r.0.as_str()).collect::<Vec<&str>>(),
-        "algorithm" => rows.iter().map(|r| r.1.as_str()).collect::<Vec<&str>>(),
-        "tp" => rows.iter().map(|r| r.2).collect::<Vec<u64>>(),
-        "fp" => rows.iter().map(|r| r.3).collect::<Vec<u64>>(),
-        "fn" => rows.iter().map(|r| r.4).collect::<Vec<u64>>(),
-        "precision" => rows.iter().map(|r| { let tp=r.2 as f64; let fp=r.3 as f64; if tp+fp>0.0 { tp/(tp+fp) } else { f64::NAN } }).collect::<Vec<f64>>(),
-        "recall" => rows.iter().map(|r| { let tp=r.2 as f64; let fn_=r.4 as f64; if tp+fn_>0.0 { tp/(tp+fn_) } else { f64::NAN } }).collect::<Vec<f64>>(),
-        "f1" => {
-            let p: Vec<f64> = rows.iter().map(|r| { let tp=r.2 as f64; let fp=r.3 as f64; if tp+fp>0.0 { tp/(tp+fp) } else { f64::NAN } }).collect();
-            let q: Vec<f64> = rows.iter().map(|r| { let tp=r.2 as f64; let fn_=r.4 as f64; if tp+fn_>0.0 { tp/(tp+fn_) } else { f64::NAN } }).collect();
-            p.iter().zip(q.iter()).map(|(pp,rr)| if pp.is_nan()||rr.is_nan()||(*pp+*rr)==0.0 { f64::NAN } else { 2.0*pp*rr/(pp+rr) }).collect::<Vec<f64>>()
-        },
-        "time_ms" => rows.iter().map(|r| r.5).map(|v| v as u64).collect::<Vec<u64>>(),
-        "time_per_seq_us" => rows.iter().map(|r| if r.6>0 { (r.5 as f64 * 1000.0)/(r.6 as f64) } else { f64::NAN }).collect::<Vec<f64>>(),
-        "nseq" => rows.iter().map(|r| r.6 as u64).collect::<Vec<u64>>(),
-        "cpu_mean_pct" => rows.iter().map(|r| r.7).collect::<Vec<f32>>(),
-        "threads" => rows.iter().map(|r| r.8 as u64).collect::<Vec<u64>>()
-    )?;
-
-    if as_csv {
-        let w = CsvWriter::new(std::io::stdout());
-        w.include_header(true).finish(&mut df)?;
-    } else {
-        print_table(&df);
-    }
-    Ok(())
-}
-
-/// Pretty table printing without truncation.
-fn print_table(df: &DataFrame) {
-    let headers = df.get_column_names_owned();
-    let mut cols: Vec<Vec<String>> = Vec::new();
-    for name in &headers {
-        let s = df.column(name).unwrap();
-        let v = s.len();
-        let mut out = Vec::with_capacity(v);
-        for i in 0..v { out.push(s.get(i).unwrap().to_string()); }
-        cols.push(out);
-    }
-    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
-    for (ci, col) in cols.iter().enumerate() {
-        for cell in col { widths[ci] = widths[ci].max(cell.chars().count()); }
-    }
-    // header
-    {
-        let mut line = String::new();
-        for (i, h) in headers.iter().enumerate() {
-            if i>0 { line.push_str(" | "); }
-            line.push_str(&format!("{:width$}", h, width=widths[i]));
+        None => {
+            eprintln!("Unknown kit: {}", id);
         }
-        println!("{}", line);
-        let mut sep = String::new();
-        for (i, _) in headers.iter().enumerate() {
-            if i>0 { sep.push_str("-+-"); }
-            sep.push_str(&"-".repeat(widths[i]));
-        }
-        println!("{}", sep);
-    }
-    for r in 0..df.height() {
-        let mut line = String::new();
-        for (i, _) in headers.iter().enumerate() {
-            let cell = &cols[i][r];
-            if i>0 { line.push_str(" | "); }
-            line.push_str(&format!("{:width$}", cell, width=widths[i]));
-        }
-        println!("{}", line);
     }
 }
