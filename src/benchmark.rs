@@ -93,19 +93,47 @@ pub struct LabelHit {
 ///
 /// We keep this lightweight; only AC is immutable and free to share
 /// across threads. We build Myers per-candidate to avoid interior mutability.
+fn revcomp_bytes(seq: &[u8]) -> Vec<u8> {
+    fn comp(b: u8) -> u8 {
+        match b {
+            b'A'|b'a' => b'T',
+            b'C'|b'c' => b'G',
+            b'G'|b'g' => b'C',
+            b'T'|b't' => b'A',
+            b'U'|b'u' => b'A',
+            b'N'|b'n' => b'N',
+            _ => b'N',
+        }
+    }
+    let mut out = Vec::with_capacity(seq.len());
+    for &b in seq.iter().rev() { out.push(comp(b)); }
+    out
+}
+
 pub struct Prebuilt<'a> {
     pub records: &'a [SequenceRecord],
     pub ac: AhoCorasick,
+    pub pat2rec: Vec<usize>,
+    pub pat_is_rc: Vec<bool>,
 }
 
 /// Build an `AhoCorasick` automaton across all kit motifs.
 pub fn prebuild_for<'a>(records: &'a [SequenceRecord]) -> Prebuilt<'a> {
-    let patterns = records.iter().map(|r| r.sequence.as_bytes());
+    let mut pats: Vec<Vec<u8>> = Vec::new();
+    let mut pat2rec: Vec<usize> = Vec::new();
+    let mut pat_is_rc: Vec<bool> = Vec::new();
+    for (i, r) in records.iter().enumerate() {
+        let fwd = r.sequence.as_bytes().to_vec();
+        pats.push(fwd); pat2rec.push(i); pat_is_rc.push(false);
+        let rc = revcomp_bytes(r.sequence.as_bytes());
+        pats.push(rc); pat2rec.push(i); pat_is_rc.push(true);
+    }
+    let pat_refs: Vec<&[u8]> = pats.iter().map(|v| v.as_slice()).collect();
     let ac = AhoCorasickBuilder::new()
-        .kind(Some(AhoCorasickKind::DFA)) // prefer DFA for short motifs
-        .build(patterns)
+        .kind(Some(AhoCorasickKind::DFA))
+        .build(pat_refs)
         .expect("failed to build Aho-Corasick automaton");
-    Prebuilt { records, ac }
+    Prebuilt { records, ac, pat2rec, pat_is_rc }
 }
 
 /// Return the best label according to the requested algorithm.
@@ -130,12 +158,20 @@ pub fn classify_best(
 fn myers_best(seq: &[u8], records: &[SequenceRecord], max_dist: usize) -> Option<LabelHit> {
     let mut best: Option<LabelHit> = None;
     for r in records {
+        // forward
         let mut m: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
         if let Some((_, end, dist)) = m.find_all(seq, max_dist as u8).next() {
             let score = -(dist as i32);
             let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: Some(end) };
-            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) {
-                best = Some(hit);
+            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) { best = Some(hit); }
+        } else {
+            // reverse-complement of reference
+            let rc = revcomp_bytes(r.sequence.as_bytes());
+            let mut mrc: Myers<u64> = MyersBuilder::new().build_64(rc.into_iter());
+            if let Some((_, end, dist)) = mrc.find_all(seq, max_dist as u8).next() {
+                let score = -(dist as i32);
+                let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: Some(end) };
+                if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) { best = Some(hit); }
             }
         }
     }
@@ -145,51 +181,58 @@ fn myers_best(seq: &[u8], records: &[SequenceRecord], max_dist: usize) -> Option
 /// Aho–Corasick prefilter then Myers per-candidate.
 fn ac_myers_best(seq: &[u8], pre: &Prebuilt, max_dist: usize) -> Option<LabelHit> {
     let mut best: Option<LabelHit> = None;
-    // De-duplicate pattern IDs we’ll verify with Myers.
     let mut seen = std::collections::HashSet::new();
     for m in pre.ac.find_iter(seq) {
         let pid = m.pattern();
         if !seen.insert(pid) { continue; }
-        let r = &pre.records[pid];
-        let mut my: Myers<u64> = MyersBuilder::new().build_64(r.sequence.as_bytes().iter().copied());
+        let ridx = pre.pat2rec[pid];
+        let r = &pre.records[ridx];
+        let pat_bytes: Vec<u8> = if pre.pat_is_rc[pid] {
+            revcomp_bytes(r.sequence.as_bytes())
+        } else { r.sequence.as_bytes().to_vec() };
+        let mut my: Myers<u64> = MyersBuilder::new().build_64(pat_bytes.into_iter());
         if let Some((_, end, dist)) = my.find_all(seq, max_dist as u8).next() {
             let score = -(dist as i32);
             let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: Some(end) };
-            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) {
-                best = Some(hit);
-            }
+            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) { best = Some(hit); }
         }
     }
     best
 }
+
 
 /// Edlib distance (C FFI; distance-only, semiglobal).
 fn edlib_best(seq: &[u8], records: &[SequenceRecord], max_dist: usize) -> Option<LabelHit> {
     let mut best: Option<LabelHit> = None;
     for r in records {
         let mut cfg: EdlibAlignConfig = unsafe { edlibDefaultAlignConfig() };
-        cfg.mode = EdlibAlignMode_EDLIB_MODE_HW; // semiglobal (end-free) is close to adapter matching
+        cfg.mode = EdlibAlignMode_EDLIB_MODE_HW; // semiglobal (end-free)
         cfg.task = EdlibAlignTask_EDLIB_TASK_DISTANCE;
         cfg.k = max_dist as i32;
 
+        // forward
         let q = r.sequence.as_bytes();
-        let res = unsafe {
-            edlibAlign(
-                q.as_ptr() as *const i8, q.len() as i32,
-                seq.as_ptr() as *const i8, seq.len() as i32,
-                cfg,
-            )
-        };
-        let dist = res.editDistance;
-        // Free internal allocations, if any (safe even when distance-only).
+        let res = unsafe { edlibAlign(q.as_ptr() as *const i8, q.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg) };
+        let mut best_local: Option<(i32, Option<i32>)> = None;
+        if res.editDistance >= 0 { best_local = Some((res.editDistance, None)); }
         unsafe { edlibFreeAlignResult(res) };
 
-        if dist >= 0 {
-            let score = -(dist as i32);
-            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: None };
-            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) {
-                best = Some(hit);
+        // reverse-complement of reference
+        let rc = revcomp_bytes(r.sequence.as_bytes());
+        let res2 = unsafe { edlibAlign(rc.as_ptr() as *const i8, rc.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg) };
+        if res2.editDistance >= 0 {
+            if let Some((d,_)) = best_local {
+                if res2.editDistance < d { best_local = Some((res2.editDistance, None)); }
+            } else {
+                best_local = Some((res2.editDistance, None));
             }
+        }
+        unsafe { edlibFreeAlignResult(res2) };
+
+        if let Some((d,_)) = best_local {
+            let score = -(d as i32);
+            let hit = LabelHit { name: r.name.to_string(), kind: r.kind, score, pos: None };
+            if best.as_ref().map(|b| hit.score > b.score).unwrap_or(true) { best = Some(hit); }
         }
     }
     best
