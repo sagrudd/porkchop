@@ -42,3 +42,5 @@ pub fn kit_is_legacy(k: &kit::Kit) -> bool { k.legacy }
 /// Base chemistry for a kit.
 /// fn `base_chemistry_of` — auto‑generated rustdoc.
 pub fn base_chemistry_of(k: &kit::Kit) -> kit::BaseChemistry { k.chemistry }
+
+pub mod clean;

@@ -12,7 +12,7 @@ repository = "https://github.com/sagrudd/porkchop"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-flate2 = "1.1.5"
+flate2 = "1"
 ratatui = "0.26"
 crossterm = "0.27"
 clap = { version = "4", features = ["derive"] }
@@ -27,6 +27,7 @@ rust-htslib = { version = "0.46", default-features = false, features = ["bzip2",
 aho-corasick = "1"
 bio = "1"
 edlib_rs = "0.1.2"
+
 [profile.release]
 lto = true
 codegen-units = 1
