@@ -65,3 +65,14 @@ MPL-2.0
 > **0.2.79**: `list-kits` prints a Polars DataFrame to stdout with wide/full formatting.
 
 > **0.2.80**: `list-kits` Polars printing tuned for wide output without overflow (width 65535, huge max rows).
+
+### `list-kits` output formats
+- `--csv` → CSV to stdout
+- `--md`  → Markdown table to stdout
+- default → Polars pretty table (use `--full` for no truncation, or `--truncate N`)
+
+### `list-kits` output
+- `--format csv` → CSV to stdout
+- `--format md`  → Markdown table to stdout
+- `--format table` (default) → Polars pretty table
+  - Use `--full` for no truncation, or `--truncate N` to limit string length.

@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use polars::prelude::*;
 
 /// Porkchop CLI
@@ -11,10 +11,22 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum OutputFormat { Csv, Md, Table }
 #[derive(Subcommand)]
 enum Commands {
     /// List all supported kits
-    ListKits,
+    ListKits {
+        /// Output format: csv | md | table
+        #[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+        format: OutputFormat,
+        /// Show full table width (no truncation) [only for --format table]
+        #[arg(long)]
+        full: bool,
+        /// Truncate string cells to N characters (ignored if --format != table or if --full)
+        #[arg(long)]
+        truncate: Option<usize>,
+    },
 
     /// Describe a kit by id (e.g., "LSK114")
     Describe {
@@ -77,9 +89,7 @@ fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::ListKits => {
-            cmd_list_kits();
-        }
+        Commands::ListKits { format, full, truncate } => { cmd_list_kits(format, full, truncate); }
 
         Commands::Describe { id } => {
             cmd_describe(id);
@@ -170,33 +180,80 @@ let truth_map = match truth {
     Ok(())
 }
 
-fn cmd_list_kits() {
-    use porkchop::{list_supported_kits};
+fn cmd_list_kits(format: OutputFormat, full: bool, truncate: Option<usize>) {
+    use porkchop::list_supported_kits;
 
     let kits = list_supported_kits();
     let ids: Vec<String> = kits.iter().map(|k| k.id.0.to_string()).collect();
     let descs: Vec<String> = kits.iter().map(|k| k.description.to_string()).collect();
     let legacy: Vec<bool> = kits.iter().map(|k| k.legacy).collect();
-    let chems: Vec<String> = kits.iter().map(|k| k.chemistry.to_string().to_string()).collect();
+    let chems: Vec<String> = kits.iter().map(|k| k.chemistry.to_string()).collect();
 
-    let df = df!(
-        "kit" => ids,
-        "description" => descs,
-        "legacy" => legacy,
-        "chemistry" => chems,
-    ).expect("dataframe");
+    let df = df!( "kit" => ids,
+                  "description" => descs,
+                  "legacy" => legacy,
+                  "chemistry" => chems, ).expect("dataframe");
 
-    
-    // Configure Polars display to show all columns and full cell width.
-    // These env vars are read by Polars' pretty-printer (fmt feature).
-    std::env::set_var("POLARS_FMT_TABLE_FORMATTING", "UTF8_FULL");
-    std::env::set_var("POLARS_FMT_MAX_COLS", "100000");
-    std::env::set_var("POLARS_FMT_MAX_ROWS", "1000000"); // effectively show all rows
-    std::env::set_var("POLARS_FMT_STR_LEN", "100000"); // don't truncate long strings
-    std::env::set_var("POLARS_TABLE_WIDTH", "65535"); // safe upper bound for width in polars 0.42
+    match format {
+        OutputFormat::Csv => {
+            let mut w = CsvWriter::new(std::io::stdout());
+            w.include_header(true).finish(&mut df.clone()).expect("write csv");
+        }
+        OutputFormat::Md => {
+            print_df_markdown(&df);
+        }
+        OutputFormat::Table => {
+            // Pretty-print Polars DataFrame with configurable formatting.
+            if full {
+                std::env::set_var("POLARS_FMT_TABLE_FORMATTING", "UTF8_FULL");
+                std::env::set_var("POLARS_FMT_MAX_COLS", "100000");
+                std::env::set_var("POLARS_FMT_MAX_ROWS", "1000000");
+                std::env::set_var("POLARS_FMT_STR_LEN", "1000000");
+                std::env::set_var("POLARS_TABLE_WIDTH", "65535"); // safe cap for Polars 0.42
+            } else {
+                let trunc = truncate.unwrap_or(80).to_string();
+                std::env::set_var("POLARS_FMT_TABLE_FORMATTING", "UTF8_FULL");
+                std::env::set_var("POLARS_FMT_MAX_COLS", "200");
+                std::env::set_var("POLARS_FMT_MAX_ROWS", "2000");
+                std::env::set_var("POLARS_FMT_STR_LEN", &trunc);
+                std::env::set_var("POLARS_TABLE_WIDTH", "200");
+            }
+            println!("{}", df);
+        }
+    }
+}
 
-    // Print the DataFrame directly (requires polars 'fmt' feature)
-    println!("{}", df);
+fn print_df_markdown(df: &DataFrame) {
+    use polars::prelude::*;
+
+    let cols = df.get_columns();
+    if cols.is_empty() {
+        println!("(empty)");
+        return;
+    }
+
+    print!("|");
+    for s in cols {
+        print!(" {} |", s.name());
+    }
+    println!();
+
+    print!("|");
+    for _ in cols.iter() {
+        print!("---|");
+    }
+    println!();
+
+    let height = df.height();
+    for i in 0..height {
+        print!("|");
+        for s in cols {
+            let v = s.get(i).map(|any| any.to_string()).unwrap_or_else(|_| "".to_string());
+            let v = v.replace("|", r"\|");
+            print!(" {} |", v);
+        }
+        println!();
+    }
 }
 
 
