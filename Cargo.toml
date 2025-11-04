@@ -2,7 +2,7 @@
 [package]
 rust-version = "1.82"
 name = "porkchop"
-version = "0.3.0"
+version = "0.3.7"
 edition = "2021"
 license = "MPL-2.0"
 description = "Authoritative ONT adapters/primers/barcodes + high-performance IO + benchmarking"
@@ -12,7 +12,7 @@ repository = "https://github.com/sagrudd/porkchop"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
+flate2 = "1.1.5"
 ratatui = "0.26"
 crossterm = "0.27"
 clap = { version = "4", features = ["derive"] }
@@ -22,7 +22,7 @@ num_cpus = "1"
 csv = "1"
 sysinfo = "0.30"
 polars = { version = "0.42", default-features = false, features = ["fmt","csv"] }
-needletail = "0.5.1"
+needletail = { version = "0.5.1", features = ["compression"] }
 rust-htslib = { version = "0.46", default-features = false, features = ["bzip2","lzma","libdeflate"] }
 aho-corasick = "1"
 bio = "1"
@@ -32,3 +32,4 @@ lto = true
 codegen-units = 1
 opt-level = 3
 tokio = { version = "1", features = ["rt-multi-thread","sync","macros","time"] }
+
