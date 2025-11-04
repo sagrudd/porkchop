@@ -186,10 +186,19 @@ fn cmd_list_kits() {
         "chemistry" => chems,
     ).expect("dataframe");
 
-    // Pretty-print as CSV to stdout
-    let mut w = CsvWriter::new(std::io::stdout());
-    w.include_header(true).finish(&mut df.clone()).expect("write csv");
+    
+    // Configure Polars display to show all columns and full cell width.
+    // These env vars are read by Polars' pretty-printer (fmt feature).
+    std::env::set_var("POLARS_FMT_TABLE_FORMATTING", "UTF8_FULL");
+    std::env::set_var("POLARS_FMT_MAX_COLS", "100000");
+    std::env::set_var("POLARS_FMT_MAX_ROWS", "1000000"); // effectively show all rows
+    std::env::set_var("POLARS_FMT_STR_LEN", "100000"); // don't truncate long strings
+    std::env::set_var("POLARS_TABLE_WIDTH", "65535"); // safe upper bound for width in polars 0.42
+
+    // Print the DataFrame directly (requires polars 'fmt' feature)
+    println!("{}", df);
 }
+
 
 fn cmd_describe(id: String) {
     use porkchop::{get_sequences_for_kit, base_chemistry_of, kit_is_legacy};

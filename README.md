@@ -58,3 +58,10 @@ porkchop screen --files reads.fastq.gz --json screen_summary.json
 ## License
 
 MPL-2.0
+
+
+> **0.2.78**: Fixed `chemistry` field mapping in `list-kits` (e.g., `LSK114` now reported as *ligation sequencing*).
+
+> **0.2.79**: `list-kits` prints a Polars DataFrame to stdout with wide/full formatting.
+
+> **0.2.80**: `list-kits` Polars printing tuned for wide output without overflow (width 65535, huge max rows).

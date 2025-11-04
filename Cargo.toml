@@ -2,7 +2,7 @@
 [package]
 rust-version = "1.82"
 name = "porkchop"
-version = "0.2.77"
+version = "0.2.80"
 edition = "2021"
 license = "MPL-2.0"
 description = "Authoritative ONT adapters/primers/barcodes + high-performance IO + benchmarking"
