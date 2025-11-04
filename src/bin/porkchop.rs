@@ -25,7 +25,10 @@ enum Commands {
         /// Kit id (must match a known ONT kit, e.g. "LSK114")
         #[arg(short, long)]
         kit: String,
-        /// Output FASTQ.GZ path
+                /// Allowed edit distance (global)
+        #[arg(long, default_value_t = 2)]
+        edits: i32,
+/// Output FASTQ.GZ path
         #[arg(short, long, value_name = "OUT.fastq.gz")]
         output: std::path::PathBuf,
         /// One or more input files (SAM, BAM, FASTQ, FASTQ.GZ)
@@ -113,8 +116,8 @@ fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
-            Commands::Clean { threads, kit, output, files } => {
-        if let Err(e) = porkchop::clean::run(threads, &kit, &output, files) {
+            Commands::Clean { threads, kit, edits, output, files } => {
+        if let Err(e) = porkchop::clean::run(threads, &kit, edits, &output, files) {
             eprintln!("clean error: {:?}", e);
             std::process::exit(1);
         }

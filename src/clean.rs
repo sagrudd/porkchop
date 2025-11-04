@@ -57,16 +57,25 @@ fn motifs_for_kit<'a>(kit: &'static crate::kit::Kit) -> Vec<Motif<'a>> {
 fn normalize_seq(seq: &[u8]) -> Vec<u8> {
     seq.iter().map(|&b| match b { b'a'..=b'z' => b.to_ascii_uppercase(), _ => b }).collect()
 }
+#[allow(dead_code)]
+#[allow(dead_code)]
 fn max_edits_for(len: usize) -> i32 { ((len as f64 * 0.15).ceil() as i32).max(1) }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ModalityKey { left: String, right: String, barcode: String }
 
 #[derive(Clone)]
-struct CleanResult { id: String, seq: Vec<u8>, qual: Vec<u8>, modality: ModalityKey, clipped: bool }
+struct CleanResult { rec: OwnedRecord, modality: ModalityKey, clipped: bool, structure: String }
 
-fn annotate_and_trim_one(seq: &[u8], qual: &[u8], _kit_id: &str, motifs: &[Motif]) -> CleanResult {
+fn annotate_and_trim_one(seq: &[u8], qual: &[u8], _kit_id: &str, motifs: &[Motif], edits: i32) -> CleanResult {
     let s = normalize_seq(seq);
+    let n = s.len() as i32;
+
+    let mut left_best: Option<(i32, i32, i32, &str)> = None;
+    let mut right_best: Option<(i32, i32, i32, &str)> = None;
+    let mut barcode_left: Option<(i32, i32, i32, &str)> = None;
+    let mut barcode_right: Option<(i32, i32, i32, &str)> = None;
+let s = normalize_seq(seq);
     let n = s.len() as i32;
 
     let mut left_best: Option<(i32, i32, i32, &str)> = None;
@@ -74,26 +83,39 @@ fn annotate_and_trim_one(seq: &[u8], qual: &[u8], _kit_id: &str, motifs: &[Motif
     let mut barcode: Option<String> = None;
 
     for m in motifs {
-        let maxk = max_edits_for(m.seq.len());
-        if let Some(hit) = edwrap::locate(m.seq, &s, maxk) {
+        if let Some(hit) = edwrap::locate(m.seq, &s, edits) {
             let center = (hit.start + hit.end) / 2;
             match m.kind {
                 "adapter_or_primer" => {
-                    if center < 300 && left_best.map_or(true, |lb| hit.edits < lb.2) {
-                        left_best = Some((hit.start, hit.end, hit.edits, m.name));
+                    if center < 300 {
+                        if left_best.map_or(true, |lb| hit.edits < lb.2) {
+                            left_best = Some((hit.start, hit.end, hit.edits, m.name));
+                        }
                     }
-                    if center > n - 300 && right_best.map_or(true, |rb| hit.edits < rb.2) {
-                        right_best = Some((hit.start, hit.end, hit.edits, m.name));
+                    if center > n - 300 {
+                        if right_best.map_or(true, |rb| hit.edits < rb.2) {
+                            right_best = Some((hit.start, hit.end, hit.edits, m.name));
+                        }
                     }
                 }
-                "barcode_or_flank" => if barcode.is_none() { barcode = Some(m.name.to_string()); },
+                "barcode_or_flank" => {
+                    if center <= n / 2 {
+                        if barcode_left.map_or(true, |b| hit.edits < b.2) {
+                            barcode_left = Some((hit.start, hit.end, hit.edits, m.name));
+                        }
+                    } else {
+                        if barcode_right.map_or(true, |b| hit.edits < b.2) {
+                            barcode_right = Some((hit.start, hit.end, hit.edits, m.name));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
     }
 
-    let mut left_cut  = 0i32;
-    let mut right_cut = n;
+    let mut left_cut:  i32 = 0;
+    let mut right_cut: i32 = n;
     let mut notes: Vec<String> = Vec::new();
 
     if let Some((st, en, ed, nm)) = left_best  { left_cut = en + 1; notes.push(format!("L:{}:{}-{}:ed={}", nm, st, en, ed)); }
@@ -115,17 +137,18 @@ fn annotate_and_trim_one(seq: &[u8], qual: &[u8], _kit_id: &str, motifs: &[Motif
         barcode: barcode.unwrap_or_else(|| "—".into()),
     };
     let clipped = left_best.is_some() || right_best.is_some();
-    CleanResult { id, seq: new_seq, qual: new_qual, modality, clipped }
+    let mut structure: Vec<&str> = Vec::new();
+    if left_best.is_some() { structure.push("sequencing adapter"); }
+    if barcode_left.is_some() { structure.push("barcode"); }
+    structure.push("insert");
+    if barcode_right.is_some() { structure.push("reverse barcode"); }
+    if right_best.is_some() { structure.push("reverse adapter"); }
+    CleanResult { rec: OwnedRecord { id, seq: new_seq, qual: new_qual }, modality, clipped, structure: structure.join(" > ") }
 }
 
 #[derive(Default)]
-struct Tallies {
-    total: u64,
-    clipped: u64,
-    unclippable: u64,
-    by_modality: HashMap<ModalityKey, u64>,
-}
-enum StatEvent { Seen(ModalityKey, bool), Done }
+struct Tallies { total: u64, clipped: u64, unclippable: u64, by_structure: HashMap<String, u64>, }
+enum StatEvent { Seen(String, bool), Done }
 
 fn expected_modalities(kit: &'static crate::kit::Kit) -> BTreeSet<(String,String)> {
     let mut names: Vec<String> = Vec::new();
@@ -136,11 +159,7 @@ fn expected_modalities(kit: &'static crate::kit::Kit) -> BTreeSet<(String,String
     set
 }
 
-fn draw_dashboard<B: ratatui::backend::Backend>(
-    terminal: &mut ratatui::Terminal<B>,
-    tallies: &Tallies,
-    expected_pairs: &BTreeSet<(String,String)>,
-) -> std::io::Result<()> {
+fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal<B>, tallies: &Tallies) -> std::io::Result<()> {
     use ratatui::layout::{Constraint, Direction, Layout};
     use ratatui::text::Text;
     use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
@@ -154,39 +173,36 @@ fn draw_dashboard<B: ratatui::backend::Backend>(
 
         let summary = Paragraph::new(Text::from(format!(
             "total: {}   clipped: {}   unclippable: {}   modalities: {}",
-            tallies.total, tallies.clipped, tallies.unclippable, tallies.by_modality.len()
+            tallies.total, tallies.clipped, tallies.unclippable, tallies.by_structure.len()
         ))).block(Block::default().borders(Borders::ALL).title("Summary"));
         f.render_widget(summary, chunks[0]);
 
-        let mut rows: Vec<(ModalityKey,u64)> = tallies.by_modality.iter().map(|(k,v)|(k.clone(),*v)).collect();
+        let mut rows: Vec<(String,u64)> = tallies.by_structure.iter().map(|(k,v)|(k.clone(),*v)).collect();
         rows.sort_by(|a,b| b.1.cmp(&a.1));
         rows.truncate(20);
-        let table_rows = rows.into_iter().map(|(k,c)| Row::new(vec![k.left, k.right, k.barcode, c.to_string()]));
-        let table = Table::new(table_rows, [Constraint::Percentage(34), Constraint::Percentage(34), Constraint::Length(14), Constraint::Length(10)]).header(Row::new(vec!["Left motif","Right motif","Barcode","Count"]))
+        let table_rows = rows.into_iter().map(|(k,c)| Row::new(vec![k, c.to_string()]));
+let table = Table::new(
+            table_rows,
+            [Constraint::Percentage(80), Constraint::Length(10)],
+        )
+            .header(Row::new(vec!["Structure", "Count"]))
             .block(Block::default().borders(Borders::ALL).title("Observed modalities (top 20)"))
             ;
         f.render_widget(table, chunks[1]);
 
-        let mut missing = 0usize;
-        for (l,r) in expected_pairs {
-            let key = ModalityKey{ left: l.clone(), right: r.clone(), barcode: "—".into() };
-            if !tallies.by_modality.contains_key(&key) { missing += 1; }
-        }
-        let expected = Paragraph::new(Text::from(format!("expected pairs: {}   missing (not yet observed): {}", expected_pairs.len(), missing)))
-            .block(Block::default().borders(Borders::ALL).title("Expected modality space"));
-        f.render_widget(expected, chunks[2]);
-    }).map(|_| ())
+        let canonical = Paragraph::new(Text::from("Canonical structure: sequencing adapter > barcode > insert > reverse barcode > reverse adapter"))
+            .block(Block::default().borders(Borders::ALL).title("Model"));
+        f.render_widget(canonical, chunks[2]);
+}).map(|_| ())
 }
 
-fn stats_thread(rx: mpsc::Receiver<StatEvent>, kit: &'static crate::kit::Kit) -> std::thread::JoinHandle<()> {
+fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit) -> std::thread::JoinHandle<()> {
     use crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
     use ratatui::backend::CrosstermBackend;
     use std::io::stdout;
 
     std::thread::spawn(move || {
         let mut tallies = Tallies::default();
-        let expected_pairs = expected_modalities(kit);
-
         let mut out = stdout();
         let _ = enable_raw_mode();
         let _ = execute!(out, EnterAlternateScreen);
@@ -203,13 +219,13 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, kit: &'static crate::kit::Kit) ->
                     StatEvent::Seen(modality, clipped) => {
                         tallies.total += 1;
                         if clipped { tallies.clipped += 1; } else { tallies.unclippable += 1; }
-                        *tallies.by_modality.entry(modality).or_insert(0) += 1;
+                        *tallies.by_structure.entry(modality).or_insert(0) += 1;
                     }
                     StatEvent::Done => { done = true; }
                 }
             }
             if last.elapsed() >= tick {
-                let _ = draw_dashboard(&mut term, &tallies, &expected_pairs);
+                let _ = draw_dashboard(&mut term, &tallies);
                 last = Instant::now();
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -241,7 +257,7 @@ fn split_supported_files(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (ok, bad)
 }
 
-fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str, kit_ref: &'static crate::kit::Kit, events: &mpsc::Sender<StatEvent>) -> anyhow::Result<()> {
+fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str, edits: i32, kit_ref: &'static crate::kit::Kit, events: &mpsc::Sender<StatEvent>) -> anyhow::Result<()> {
     use std::fs::File;
     use std::io::BufWriter;
     use needletail::parser::parse_fastx_file;
@@ -269,10 +285,10 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let name = std::str::from_utf8(r.qname()).unwrap_or("SAM");
                         let seq = r.seq().as_bytes();
                         let qual = r.qual().iter().map(|q| (q + 33) as u8).collect::<Vec<u8>>();
-                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs);
+                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.modality.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.id); write_fastq_record(&mut gz, &rid, &cr.seq, &cr.qual)?; }
+                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
                     buf.clear();
                 }
             }
@@ -281,10 +297,10 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let name = std::str::from_utf8(r.qname()).unwrap_or("SAM");
                         let seq = r.seq().as_bytes();
                         let qual = r.qual().iter().map(|q| (q + 33) as u8).collect::<Vec<u8>>();
-                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs);
+                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.modality.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.id); write_fastq_record(&mut gz, &rid, &cr.seq, &cr.qual)?; }
+                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
             }
 
         } else if lower.ends_with(".bam") {
@@ -299,10 +315,10 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let name = std::str::from_utf8(r.qname()).unwrap_or("BAM");
                         let seq = r.seq().as_bytes();
                         let qual = r.qual().iter().map(|q| (q + 33) as u8).collect::<Vec<u8>>();
-                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs);
+                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.modality.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.id); write_fastq_record(&mut gz, &rid, &cr.seq, &cr.qual)?; }
+                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
                     buf.clear();
                 }
             }
@@ -311,10 +327,10 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let name = std::str::from_utf8(r.qname()).unwrap_or("BAM");
                         let seq = r.seq().as_bytes();
                         let qual = r.qual().iter().map(|q| (q + 33) as u8).collect::<Vec<u8>>();
-                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs);
+                        let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.modality.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.id); write_fastq_record(&mut gz, &rid, &cr.seq, &cr.qual)?; }
+                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
             }
 
         } else {
@@ -335,12 +351,12 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                 }
                 if owned_chunk.is_empty() { break; }
                 let processed: Vec<CleanResult> = owned_chunk.par_iter()
-                    .map(|r| annotate_and_trim_one(&r.seq, &r.qual, kit_id, &motifs))
+                    .map(|r| annotate_and_trim_one(&r.seq, &r.qual, kit_id, &motifs, edits))
                     .collect();
                 for (src, cr) in owned_chunk.iter().zip(processed.iter()) {
-                    let _ = events.send(StatEvent::Seen(cr.modality.clone(), cr.clipped));
-                    let rid = format!("{} {}", src.id, cr.id);
-                    write_fastq_record(&mut gz, &rid, &cr.seq, &cr.qual)?;
+                    let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped));
+                    let rid = format!("{} {}", src.id, cr.rec.id);
+                    write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?;
                 }
             }
         }
@@ -350,7 +366,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
     Ok(())
 }
 
-pub fn run(threads: usize, kit: &str, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
+pub fn run(threads: usize, kit: &str, edits: i32, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
         ensure_known_kit(kit)?;
 if crate::get_sequences_for_kit(kit).is_none() {
         anyhow::bail!("Unknown kit: {}. Use `porkchop list-kits --format table` to see valid kit ids.", kit);
@@ -371,7 +387,7 @@ if crate::get_sequences_for_kit(kit).is_none() {
     let ui_handle = stats_thread(rx, kit_ref);
 
     eprintln!("clean: kit={} | threads={} | inputs={} | output={}", kit, threads_eff, ok.len(), output.display());
-    let ret = process_fastx_to_gz(output, ok, kit, kit_ref, &tx);
+    let ret = process_fastx_to_gz(output, ok, kit, edits, kit_ref, &tx);
 
     let _ = tx.send(StatEvent::Done);
     let _ = ui_handle.join();
