@@ -20,6 +20,7 @@ const CHTD_A15: Provenance = Provenance {
 };
 
 /// Ligation Adapter (LA) top strand. 5'-TTTTTTTTCCTGTACTTCGTTCAGTTACGTATTGCT-3'
+/// const `LA_TOP` — auto‑generated rustdoc.
 pub const LA_TOP: SequenceRecord = SequenceRecord {
     name: "LA_top",
     kind: SeqKind::AdapterTop,
@@ -28,6 +29,7 @@ pub const LA_TOP: SequenceRecord = SequenceRecord {
 };
 
 /// Ligation Adapter (LA) bottom strand. 5’-GCAATACGTAACTGAACGAAGTACAGG-3’
+/// const `LA_BOTTOM` — auto‑generated rustdoc.
 pub const LA_BOTTOM: SequenceRecord = SequenceRecord {
     name: "LA_bottom",
     kind: SeqKind::AdapterBottom,
@@ -36,6 +38,7 @@ pub const LA_BOTTOM: SequenceRecord = SequenceRecord {
 };
 
 /// Native Adapter (NA) top strand (same top as LA).
+/// const `NA_TOP` — auto‑generated rustdoc.
 pub const NA_TOP: SequenceRecord = SequenceRecord {
     name: "NA_top",
     kind: SeqKind::AdapterTop,
@@ -44,6 +47,7 @@ pub const NA_TOP: SequenceRecord = SequenceRecord {
 };
 
 /// Native Adapter (NA) bottom strand. 5'-ACGTAACTGAACGAAGTACAGG-3'
+/// const `NA_BOTTOM` — auto‑generated rustdoc.
 pub const NA_BOTTOM: SequenceRecord = SequenceRecord {
     name: "NA_bottom",
     kind: SeqKind::AdapterBottom,
@@ -52,6 +56,7 @@ pub const NA_BOTTOM: SequenceRecord = SequenceRecord {
 };
 
 /// Rapid Adapter (RA) top strand.
+/// const `RA_TOP` — auto‑generated rustdoc.
 pub const RA_TOP: SequenceRecord = SequenceRecord {
     name: "RA_top",
     kind: SeqKind::AdapterTop,
@@ -60,6 +65,7 @@ pub const RA_TOP: SequenceRecord = SequenceRecord {
 };
 
 /// Rapid Adapter T (RAP T).
+/// const `RAP_T` — auto‑generated rustdoc.
 pub const RAP_T: SequenceRecord = SequenceRecord {
     name: "RAP_T",
     kind: SeqKind::AdapterTop,
@@ -68,6 +74,7 @@ pub const RAP_T: SequenceRecord = SequenceRecord {
 };
 
 /// RNA/cDNA RT Primer (RTP).
+/// const `RTP` — auto‑generated rustdoc.
 pub const RTP: SequenceRecord = SequenceRecord {
     name: "RTP",
     kind: SeqKind::Primer,
@@ -76,6 +83,7 @@ pub const RTP: SequenceRecord = SequenceRecord {
 };
 
 /// Strand Switching Primer II (SSPII). V=A/C/G; mG=riboguanosine (ONT notation).
+/// const `SSPII` — auto‑generated rustdoc.
 pub const SSPII: SequenceRecord = SequenceRecord {
     name: "SSPII",
     kind: SeqKind::Primer,
@@ -84,6 +92,7 @@ pub const SSPII: SequenceRecord = SequenceRecord {
 };
 
 /// cDNA RT Adapter (CRTA).
+/// const `CRTA` — auto‑generated rustdoc.
 pub const CRTA: SequenceRecord = SequenceRecord {
     name: "CRTA",
     kind: SeqKind::Primer,
@@ -92,6 +101,7 @@ pub const CRTA: SequenceRecord = SequenceRecord {
 };
 
 /// cDNA Primer (cPRM) forward sequence.
+/// const `CPRM_FWD` — auto‑generated rustdoc.
 pub const CPRM_FWD: SequenceRecord = SequenceRecord {
     name: "cPRM_forward",
     kind: SeqKind::Primer,
@@ -100,6 +110,7 @@ pub const CPRM_FWD: SequenceRecord = SequenceRecord {
 };
 
 /// cDNA Primer (cPRM) reverse sequence.
+/// const `CPRM_REV` — auto‑generated rustdoc.
 pub const CPRM_REV: SequenceRecord = SequenceRecord {
     name: "cPRM_reverse",
     kind: SeqKind::Primer,
@@ -108,6 +119,7 @@ pub const CPRM_REV: SequenceRecord = SequenceRecord {
 };
 
 /// Convenience: all adapter/primer records for current kits.
+/// const `CURRENT_ADAPTERS_AND_PRIMERS` — auto‑generated rustdoc.
 pub const CURRENT_ADAPTERS_AND_PRIMERS: &[SequenceRecord] = &[
     LA_TOP, LA_BOTTOM, NA_TOP, NA_BOTTOM, RA_TOP, RAP_T, RTP, SSPII, CRTA, CPRM_FWD, CPRM_REV,
 ];

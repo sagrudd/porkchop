@@ -110,6 +110,7 @@ fn revcomp_bytes(seq: &[u8]) -> Vec<u8> {
     out
 }
 
+/// struct `Prebuilt` — auto‑generated rustdoc.
 pub struct Prebuilt {
     pub records: Arc<Vec<SequenceRecord>>,
     pub ac: AhoCorasick,
@@ -118,6 +119,7 @@ pub struct Prebuilt {
 }
 
 /// Build an `AhoCorasick` automaton across all kit motifs.
+/// fn `prebuild_for` — auto‑generated rustdoc.
 pub fn prebuild_for(records: &[SequenceRecord]) -> Prebuilt {
     let mut pats: Vec<Vec<u8>> = Vec::new();
     let mut pat2rec: Vec<usize> = Vec::new();
@@ -138,6 +140,7 @@ pub fn prebuild_for(records: &[SequenceRecord]) -> Prebuilt {
 }
 
 /// Return the best label according to the requested algorithm.
+/// fn `classify_best` — auto‑generated rustdoc.
 pub fn classify_best(
     algo: BenchmarkAlgo,
     seq: &[u8],
@@ -246,6 +249,7 @@ fn parasail_best(_seq: &[u8], _records: &[SequenceRecord]) -> Option<LabelHit> {
 }
 
 /// Load a simple truth map (read_id -> expected_label). Supports CSV or TSV.
+/// fn `load_truth` — auto‑generated rustdoc.
 pub fn load_truth<P: AsRef<Path>>(path: P) -> anyhow::Result<HashMap<String, String>> {
     let p = path.as_ref();
     let delim = if p.extension().map(|e| e == "tsv").unwrap_or(false) { b'\t' } else { b',' };
@@ -348,6 +352,7 @@ impl std::fmt::Display for BenchmarkAlgo {
 }
 
 
+/// fn `classify_all` — auto‑generated rustdoc.
 pub fn classify_all(
     algo: BenchmarkAlgo,
     seq: &[u8],

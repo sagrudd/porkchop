@@ -1,3 +1,4 @@
+//! Module `screen` — auto‑generated docs for porkchop.
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
 use std::time::{Duration, Instant};
@@ -126,6 +127,7 @@ use ratatui::widgets::{Block, Borders, Row, Table};
 use serde_json;
 
 #[derive(Debug, Clone)]
+/// struct `ScreenOpts` — auto‑generated rustdoc.
 pub struct ScreenOpts {
     pub files: Vec<String>,
     pub threads: Option<usize>,
@@ -176,6 +178,7 @@ fn revcomp(s: &str) -> String {
 }
 
 
+/// fn `run_screen` — auto‑generated rustdoc.
 pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let records = Arc::new(collect_all_sequences());
     let rec_map: std::collections::HashMap<String, String> = records.iter()

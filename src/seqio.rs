@@ -49,6 +49,7 @@ pub struct NARead {
 }
 
 /// Core driver: parse and iterate records, potentially in parallel (rayon pool size).
+/// fn `for_each_parallel` — auto‑generated rustdoc.
 pub fn for_each_parallel<P, F>(path: P, threads: Option<usize>, on_record: F) -> Result<(InputFormat, usize)>
 where
     P: AsRef<Path>,

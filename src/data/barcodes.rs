@@ -22,26 +22,34 @@ const CHTD_A14: Provenance = Provenance{
 // === Flanking sequences ===
 
 /// NB forward flank: 5' - AAGGTTAA - barcode - CAGCACCT - 3'
+/// const `NB_FLANK_FWD` — auto‑generated rustdoc.
 pub const NB_FLANK_FWD: SequenceRecord = SequenceRecord{ name: "NB_flank_fwd", kind: SeqKind::Flank, sequence: "AAGGTTAA", provenance: CHTD_A14 };
 /// NB reverse flank: 5' - GGTGCTG - barcode - TTAACCTTAGCAAT - 3'
+/// const `NB_FLANK_REV5` — auto‑generated rustdoc.
 pub const NB_FLANK_REV5: SequenceRecord = SequenceRecord{ name: "NB_flank_rev5", kind: SeqKind::Flank, sequence: "GGTGCTG", provenance: CHTD_A14 };
 pub const NB_FLANK_REV3: SequenceRecord = SequenceRecord{ name: "NB_flank_rev3", kind: SeqKind::Flank, sequence: "TTAACCTTAGCAAT", provenance: CHTD_A14 };
 
 /// Rapid barcoding flank (left/right).
+/// const `RB_FLANK_LEFT` — auto‑generated rustdoc.
 pub const RB_FLANK_LEFT: SequenceRecord = SequenceRecord{ name: "RB_flank_left", kind: SeqKind::Flank, sequence: "GCTTGGGTGTTTAACC", provenance: CHTD_A14 };
 pub const RB_FLANK_RIGHT: SequenceRecord = SequenceRecord{ name: "RB_flank_right", kind: SeqKind::Flank, sequence: "GTTTTCGCATTTATCGTGAAACGCTTTCGCGTTTTTCGTGCGCCGCTTCA", provenance: CHTD_A14 };
 
 /// PCR‑cDNA flanks (top/bottom) to avoid loop formation.
+/// const `PCB_FLANK_TOP` — auto‑generated rustdoc.
 pub const PCB_FLANK_TOP: SequenceRecord = SequenceRecord{ name: "PCB_flank_top", kind: SeqKind::Flank, sequence: "ATCGCCTACCGTGA", provenance: CHTD_A14 };
 pub const PCB_FLANK_BOT_A: SequenceRecord = SequenceRecord{ name: "PCB_flank_bot_A", kind: SeqKind::Flank, sequence: "TTGCCTGTCGCTCTATCTTC", provenance: CHTD_A14 };
+/// const `PCB_FLANK_BOT_B` — auto‑generated rustdoc.
 pub const PCB_FLANK_BOT_B: SequenceRecord = SequenceRecord{ name: "PCB_flank_bot_B", kind: SeqKind::Flank, sequence: "TCTGTTGGTGCTGATATTGC", provenance: CHTD_A14 };
 
 /// Rapid‑PCR flank.
+/// const `RPB_FLANK` — auto‑generated rustdoc.
 pub const RPB_FLANK: SequenceRecord = SequenceRecord{ name: "RPB_flank", kind: SeqKind::Flank, sequence: "ATCGCCTACCGTGAC", provenance: CHTD_A14 };
 
 /// 16S primer + barcode flanks.
+/// const `SIXTEENS_FLANK` — auto‑generated rustdoc.
 pub const SIXTEENS_FLANK: SequenceRecord = SequenceRecord{ name: "16S_flank", kind: SeqKind::Flank, sequence: "ATCGCCTACCGTGAC", provenance: CHTD_A14 };
 pub const SIXTEENS_FWD_TARGET: SequenceRecord = SequenceRecord{ name: "16S_fwd_target", kind: SeqKind::Primer, sequence: "AGAGTTTGATCMTGGCTCAG", provenance: Provenance{ notes: Some("M = A/C wobble base"), ..CHTD_A14 } };
+/// const `SIXTEENS_REV_TARGET` — auto‑generated rustdoc.
 pub const SIXTEENS_REV_TARGET: SequenceRecord = SequenceRecord{ name: "16S_rev_target", kind: SeqKind::Primer, sequence: "CGGTTACCTTGTTACGACTT", provenance: CHTD_A14 };
 
 // === NB01–NB96 forward barcode cores ===
@@ -53,6 +61,7 @@ macro_rules! nb { ($id:literal, $seq:literal) => { SequenceRecord{ name: $id, ki
 // === NB01–NB96 forward barcode cores ===
 #[allow(unused_macros)]
 macro_rules! nb { ($id:literal, $seq:literal) => { SequenceRecord{ name: $id, kind: SeqKind::Barcode, sequence: $seq, provenance: CHTD_A14 } }; }
+/// const `NB_BARCODES` — auto‑generated rustdoc.
 pub const NB_BARCODES: &[SequenceRecord] = &[
     nb!("NB01", "CACAAAGACACCGACAACTTTCTT"),
     nb!("NB02", "ACAGACGACTACAAACGGAATCGA"),
@@ -153,6 +162,7 @@ pub const NB_BARCODES: &[SequenceRecord] = &[
 ];
 
 /// Convenience: first 24 NB barcodes as a separate constant to allow use in `const` kit registry.
+/// const `NB_BARCODES_24` — auto‑generated rustdoc.
 pub const NB_BARCODES_24: &[SequenceRecord] = &[
     nb!("NB01", "CACAAAGACACCGACAACTTTCTT"),
     nb!("NB02", "ACAGACGACTACAAACGGAATCGA"),
@@ -184,6 +194,7 @@ pub const NB_BARCODES_24: &[SequenceRecord] = &[
 macro_rules! bx { ($label:literal, $seq:literal) => { SequenceRecord{ name: $label, kind: SeqKind::Barcode, sequence: $seq, provenance: CHTD_A14 } }; }
 
 /// Shared cores 1–24 (BP/BC/RB/16S/RLB).
+/// const `SHARED_1_TO_24` — auto‑generated rustdoc.
 pub const SHARED_1_TO_24: &[SequenceRecord] = &[
     bx!("BP01/BC01/RB01/16S01/RLB01", "AAGAAAGTTGTCGGTGTCTTTGTG"),
     bx!("BP02/BC02/RB02/16S02/RLB02", "TCGATTCCGTTTGTAGTCGTCTGT"),
@@ -212,6 +223,7 @@ pub const SHARED_1_TO_24: &[SequenceRecord] = &[
 ];
 
 /// Convenience: first 12 shared cores (for PBC001 kits).
+/// const `SHARED_1_TO_12` — auto‑generated rustdoc.
 pub const SHARED_1_TO_12: &[SequenceRecord] = &[
     bx!("BP01/BC01/RB01/16S01/RLB01", "AAGAAAGTTGTCGGTGTCTTTGTG"),
     bx!("BP02/BC02/RB02/16S02/RLB02", "TCGATTCCGTTTGTAGTCGTCTGT"),
@@ -228,6 +240,7 @@ pub const SHARED_1_TO_12: &[SequenceRecord] = &[
 ];
 
 /// Shared cores 25–96 (BC/RB only).
+/// const `SHARED_25_TO_96` — auto‑generated rustdoc.
 pub const SHARED_25_TO_96: &[SequenceRecord] = &[
     bx!("BC25/RB25", "GTAAGTTGGGTATGCAACGCAATG"),
     bx!("BC26/RB26", "CATACAGCGACTACGCATTCTCAT"),
@@ -304,6 +317,7 @@ pub const SHARED_25_TO_96: &[SequenceRecord] = &[
 ];
 
 /// Convenience: all shared cores 1–96 in a single array (const-friendly).
+/// const `SHARED_BARCODE_SET` — auto‑generated rustdoc.
 pub const SHARED_BARCODE_SET: &[SequenceRecord] = &[
     bx!("BP01/BC01/RB01/16S01/RLB01", "AAGAAAGTTGTCGGTGTCTTTGTG"),
     bx!("BP02/BC02/RB02/16S02/RLB02", "TCGATTCCGTTTGTAGTCGTCTGT"),

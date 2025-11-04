@@ -12,6 +12,7 @@ const PORECHOP_FORK: Provenance = Provenance {
 };
 
 /// Legacy Y‑adapter trunk (SQK‑NSK007/LSK108/LSK109) — start/top.
+/// const `NSK007_Y_TOP_TRUNK` — auto‑generated rustdoc.
 pub const NSK007_Y_TOP_TRUNK: SequenceRecord = SequenceRecord {
     name: "SQK-NSK007_Y_Top_trunk",
     kind: SeqKind::AdapterTop,
@@ -20,6 +21,7 @@ pub const NSK007_Y_TOP_TRUNK: SequenceRecord = SequenceRecord {
 };
 
 /// Legacy Y‑adapter bottom.
+/// const `NSK007_Y_BOTTOM` — auto‑generated rustdoc.
 pub const NSK007_Y_BOTTOM: SequenceRecord = SequenceRecord {
     name: "SQK-NSK007_Y_Bottom",
     kind: SeqKind::AdapterBottom,
@@ -28,6 +30,7 @@ pub const NSK007_Y_BOTTOM: SequenceRecord = SequenceRecord {
 };
 
 /// 1D^2 top fragment (LSK308).
+/// const `LSK308_1D2_TOP` — auto‑generated rustdoc.
 pub const LSK308_1D2_TOP: SequenceRecord = SequenceRecord {
     name: "SQK-LSK308_1D2_Top",
     kind: SeqKind::AdapterTop,
@@ -36,6 +39,7 @@ pub const LSK308_1D2_TOP: SequenceRecord = SequenceRecord {
 };
 
 /// 1D^2 bottom fragment (LSK308).
+/// const `LSK308_1D2_BOTTOM` — auto‑generated rustdoc.
 pub const LSK308_1D2_BOTTOM: SequenceRecord = SequenceRecord {
     name: "SQK-LSK308_1D2_Bottom",
     kind: SeqKind::AdapterBottom,
@@ -44,6 +48,7 @@ pub const LSK308_1D2_BOTTOM: SequenceRecord = SequenceRecord {
 };
 
 /// Group of legacy fragments.
+/// const `LEGACY` — auto‑generated rustdoc.
 pub const LEGACY: &[SequenceRecord] = &[
     NSK007_Y_TOP_TRUNK, NSK007_Y_BOTTOM, LSK308_1D2_TOP, LSK308_1D2_BOTTOM,
 ];

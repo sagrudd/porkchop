@@ -8,6 +8,7 @@ use crate::data::adapters::{RA_TOP, RTP, SSPII, CRTA};
 use crate::data::cdna_legacy::{SSP, VNP};
 use crate::data::{adapters::*, barcodes::*, legacy::*};
 
+/// const `KITS` — auto‑generated rustdoc.
 pub const KITS: &[Kit] = &[
     // Current ligation chemistry (Kit 14)
     Kit{

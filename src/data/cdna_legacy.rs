@@ -21,6 +21,7 @@ const PYCHOPPER_DEFAULTS: Provenance = Provenance {
 };
 
 /// SSP — classic strand‑switching primer (historical PCR‑cDNA).
+/// const `SSP` — auto‑generated rustdoc.
 pub const SSP: SequenceRecord = SequenceRecord {
     name: "SSP",
     kind: SeqKind::Primer,
@@ -29,6 +30,7 @@ pub const SSP: SequenceRecord = SequenceRecord {
 };
 
 /// VNP — classic oligo‑dT VN primer (historical PCR‑cDNA).
+/// const `VNP` — auto‑generated rustdoc.
 pub const VNP: SequenceRecord = SequenceRecord {
     name: "VNP",
     kind: SeqKind::Primer,
@@ -37,4 +39,5 @@ pub const VNP: SequenceRecord = SequenceRecord {
 };
 
 /// Convenience slice for legacy PCR‑cDNA primers.
+/// const `LEGACY_CDNA_PRIMERS` — auto‑generated rustdoc.
 pub const LEGACY_CDNA_PRIMERS: &[SequenceRecord] = &[SSP, VNP];

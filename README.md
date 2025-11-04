@@ -1,83 +1,271 @@
 # porkchop
 
-**Version:** 0.2.69
 
-porkchop is a Rust toolkit for Oxford Nanopore data: kit registry, high‑performance IO, and read **screening** to identify adapters, barcodes, primers and flanks.
+Oxford Nanopore™ library/kit inspection, screening and reporting.
 
----
+**Highlights**
+- List & describe kits
+- Live TUI screening with strand‑specific hit counts and throughput
+- Polars dataframes for kit predictions
+- HTML reporting (`--html`)
+- Benchmarking of algorithms (edlib, Myers, aCMYers)
 
-## Features
 
-- `list-kits` — tabular kit overview with correct base chemistry
-- `describe-kit` — show kit details and motifs
-- `screen` — classify synthetic sequences in reads (FASTQ/SAM/BAM)
-- `bench` — benchmark alternative matchers
-
-### Screen highlights
-
-- Multi-format input: **FASTQ**, **SAM**, **BAM**
-- Parallel processing across all cores by default
-- Fractional subsampling (`--fraction`, default 0.05)
-- Live TUI (ratatui) with screened / hits / unclassified / skipped and top contexts
-- JSON export of aggregate contexts (`--json out.json`)
-- Default matcher distance: `--max-dist=2`
-
----
 
 ## Build
-
 ```bash
 cargo build --release
 ```
 
-## Quick start
 
+## Subcommands
+
+
+### `listkits`
+List all supported kits and output in CSV/Markdown/plain table.
+
+
+**Options**  
+- `--format <csv|md|table>` (default: table)  
+- `--full` (no truncation for table)  
+- `--truncate <N>` (truncate cell width when table & not `--full`)
+
+**Examples**
 ```bash
-porkchop list-kits
-porkchop describe-kit --kit LSK114
-porkchop screen --files reads.fastq.gz --fraction 0.05 --tick 2 --max-dist 2
-porkchop screen --files reads.fastq.gz --json screen_summary.json
+porkchop list-kits --format table --full
+porkchop list-kits --format csv
+porkchop list-kits --format md --truncate 32
 ```
 
-### Exit keys
+### `describe`
+Describe a specific kit by `--id` with adapters/primers/barcodes.
 
-- Press **q** to quit immediately.
 
----
+**Args**
+- `--id <KIT_ID>` (e.g., LSK114)
 
-## JSON output
-
-```json
-[
-  { "id": "NB_flank_fwd + NB_flank_rev5 + BC25", "count": 1249 }
-]
+**Example**
+```bash
+porkchop describe --id LSK114
 ```
 
----
-
-## License
-
-MPL-2.0
+### `benchmark`
+Benchmark edit distance algorithms on dataset(s) with an optional truth set.
 
 
-> **0.2.78**: Fixed `chemistry` field mapping in `list-kits` (e.g., `LSK114` now reported as *ligation sequencing*).
+**Options**
+- `--algorithms edlib,myers,acmyers` (default in code)
+- `--max-dist <N>` (default: 24)
+- `--threads <N>` (0/None = all)
 
-> **0.2.79**: `list-kits` prints a Polars DataFrame to stdout with wide/full formatting.
+**Args**
+- `--files <...>` (FASTQ/FASTA/FASTQ.GZ/SAM/BAM)  
+- `--kit <KIT_ID>`  
+- `--truth <CSV>` (optional)
 
-> **0.2.80**: `list-kits` Polars printing tuned for wide output without overflow (width 65535, huge max rows).
+**Example**
+```bash
+porkchop benchmark --files reads.fastq.gz --kit LSK114   --algorithms edlib,myers,acmyers --max-dist 24 --threads 8
+```
 
-### `list-kits` output formats
-- `--csv` → CSV to stdout
-- `--md`  → Markdown table to stdout
-- default → Polars pretty table (use `--full` for no truncation, or `--truncate N`)
+### `screen`
+Screen reads to infer the most likely sequencing kit and display a live TUI.
 
-### `list-kits` output
-- `--format csv` → CSV to stdout
-- `--format md`  → Markdown table to stdout
-- `--format table` (default) → Polars pretty table
-  - Use `--full` for no truncation, or `--truncate N` to limit string length.
 
-### `screen` updates
-- Per‑read counts (deduped) in the "Top synthetic sequences" panel
-- (+)/(-) columns show sequence and reverse complement
-- Pretty-printed Polars DataFrame for kit analysis after run
+**Options**
+- `--algorithm <edlib|myers|acmyers>` (default: edlib)
+- `--max-dist <N>` (default: 24)
+- `--fraction <0.0-1.0>` (default: 0.05)
+- `--tick <seconds>` (default: 2)
+- `--threads <N>` (0/None = all)
+- `--json <PATH>` (write contexts as JSON)
+- `--kit-prob-min <P>` (default: 0.1) — hide kits with P ≤ threshold
+- `--html <PATH>` (write HTML report at end of run)
+
+**Example**
+```bash
+porkchop screen --files reads.fastq.gz --algorithm edlib --max-dist 24   --fraction 0.05 --tick 2 --kit-prob-min 0.1 --html screen_report.html
+```
+
+
+## Supported Sequencing Kits
+
+
+- **LSK114** — Ligation Sequencing Kit V14 (LSK114). Uses LA adapter; pairs with Native Barcoding kits.
+
+  
+  Line‑art:
+  ```
+5' ── LA_TOP ── INSERT ── LA_BOTTOM ── 3'
+      ↑ Adapter ligation at both ends; barcodes via NBD kits
+  ```
+
+- **PCS111** — PCR‑cDNA Sequencing Kit (SQK‑PCS111). Uses legacy SSP/VNP primers and RA; CRTA+RTP included.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **PCS114** — PCR‑cDNA Sequencing Kit V14 (SQK‑PCS114). Uses SSPII/RTP/CRTA and RA.
+
+  
+  Line‑art:
+  ```
+5' ── VNP/SSPII primer → RT → CRTA/RTP tails ── INSERT ── RA ── 3'
+      ↑ cDNA workflow; PCB/NB barcodes optional
+  ```
+
+- **LSK114-XL** — Ligation Sequencing Kit V14 XL (LSK114-XL). LA adapter; typical with NBD114.x sets.
+
+  
+  Line‑art:
+  ```
+5' ── LA_TOP ── INSERT ── LA_BOTTOM ── 3'
+      ↑ Adapter ligation at both ends; barcodes via NBD kits
+  ```
+
+- **NBD114.24** — Native Barcoding Kit 24 V14. Uses NA adapter + NB01–24; NB flanks.
+
+  
+  Line‑art:
+  ```
+5' ── LA_TOP ── INSERT ── LA_BOTTOM ── 3'
+      ↑ Adapter ligation at both ends; barcodes via NBD kits
+  ```
+
+- **NBD114.96** — Native Barcoding Kit 96 V14. Uses NA adapter + NB01–96; NB flanks.
+
+  
+  Line‑art:
+  ```
+5' ── LA_TOP ── INSERT ── LA_BOTTOM ── 3'
+      ↑ Adapter ligation at both ends; barcodes via NBD kits
+  ```
+
+- **RBK114.24** — Rapid Barcoding Kit 24 V14. Uses RA adapter + RB01–24 core barcodes; RB flanks.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **RBK114.96** — Rapid Barcoding Kit 96 V14. Uses RA adapter + RB01–96 core barcodes; RB flanks.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **PCB111.24** — PCR‑cDNA Barcoding Kit 24 (Kit 11). Uses SSP/VNP (pychopper) with CRTA/RTP and PCB flanks; BP01–24.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **PCB114.24** — PCR‑cDNA Barcoding Kit 24 V14. Uses cDNA adapters/primers + BP01–24; PCB flanks.
+
+  
+  Line‑art:
+  ```
+5' ── VNP/SSPII primer → RT → CRTA/RTP tails ── INSERT ── RA ── 3'
+      ↑ cDNA workflow; PCB/NB barcodes optional
+  ```
+
+- **RPB114.24** — Rapid PCR Barcoding Kit 24 V14. Uses RA + RLB01–24 core barcodes; RPB flank.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **PBC001** — PCR Barcoding Expansion 1–12 (EXP‑PBC001): BC01–BC12; PBC flanks.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **PBC096** — PCR Barcoding Expansion 1–96 (EXP‑PBC096): BC01–BC96; PBC flanks.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **RBK004** — Rapid Barcoding Kit (RBK004): RB01–RB12; RB flank.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **RBK110.96** — Rapid Barcoding Kit 96 (RBK110.96): RB01–RB96; RB flank.
+
+  
+  Line‑art:
+  ```
+5' ── RA (transposase‑attached) ── INSERT ── RA ── 3'
+      ↑ Rapid attachment; barcodes via RB kits
+  ```
+
+- **LSK109** — Ligation Sequencing Kit LSK109 (legacy). Y‑adapter trunk per Porechop forks.
+
+  
+  Line‑art:
+  ```
+5' ── LA_TOP ── INSERT ── LA_BOTTOM ── 3'
+      ↑ Adapter ligation at both ends; barcodes via NBD kits
+  ```
+
+- **LSK108** — Ligation Sequencing Kit LSK108 (legacy). Y‑adapter trunk per Porechop forks.
+
+  
+  Line‑art:
+  ```
+5' ── LA_TOP ── INSERT ── LA_BOTTOM ── 3'
+      ↑ Adapter ligation at both ends; barcodes via NBD kits
+  ```
+
+- **LSK308** — 1D^2 kit LSK308 (legacy). 1D^2 adapter fragments per Porechop forks.
+
+  
+  Line‑art:
+  ```
+5' ── LA_TOP ── INSERT ── LA_BOTTOM ── 3'
+      ↑ Adapter ligation at both ends; barcodes via NBD kits
+  ```
+
+- **MAB114.24** — Microbial Amplicon Barcoding 24 V14 (SQK‑MAB114.24). Rapid‑based; 16S and ITS targets; 24 barcodes.
+
+  
+  Line‑art:
+  ```
+5' ── PCR primers (with adapters) ── INSERT ── PCR primers ── 3'
+      ↑ Amplicon library; barcodes via EXP‑NBD or native
+  ```
+
+
+## HTML Report
+When `--html <path>` is provided, a self‑contained report is written at the end of screening (after TUI teardown). It includes:
+- Run parameters
+- Top synthetic sequences (complete; `(+ )` forward and `(−)` reverse hit counts; deduped reads)
+- Top co‑occurrence contexts (complete)
+- Sequencing kit predictions (filtered by `--kit-prob-min`)

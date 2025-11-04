@@ -1,4 +1,63 @@
 
+## 0.2.87 - 2025-11-04
+### Fixed
+- Removed stray duplicated block after `tui_loop` that re-opened the draw loop (`} if done.load(...)`), fixing brace mismatch.
+
+## 0.2.86 - 2025-11-04
+### Screen TUI
+- Rewrote `tui_loop` with a clean, bracket‑balanced implementation.
+- Proper `terminal.draw(|f| { ... })` closure, explicit layout (header + 2 columns), and safe event loop.
+- Header shows: screened, total hits, hits/read, reads with ≥1 hit, unclassified %, skipped %.
+- Top sequences table now: name, kind, (+), (−), reads (per‑read deduped).
+- Top co‑occurrence table unchanged, sorted by count.
+
+## 0.2.85 - 2025-11-04
+### Fixed
+- Repaired TUI draw loop braces and restored valid stats line (no ellipses).
+- Removed accidental Polars pretty‑print block from inside the draw loop; final kit table still printed **after** the TUI exits.
+
+## 0.2.84 - 2025-11-04
+### Screen improvements
+- Counts in **Top synthetic sequences** are now per **read** (deduped by `(name, kind)`), avoiding inflated counts when multiple hits occur in one read.
+- Added columns **(+)**/**(-)** with the motif sequence and its **reverse complement**.
+- Header now shows **reads with ≥1 hit** and **hits/read** for clarity.
+- After the TUI closes, the **kit-likelihood analysis** is printed as a wide **Polars DataFrame** at the console (as well as JSON on disk).
+
+## 0.2.83 - 2025-11-04
+### Fixed
+- Attached `#[derive(Subcommand)]` to `enum Commands` to restore clap parsing.
+- Corrected Markdown pipe escaping in `print_df_markdown` to a valid Rust string.
+
+## 0.2.82 - 2025-11-04
+### Added
+- `list-kits` now supports `--format <csv|md|table>` (default: `table`).
+  - `--full` and `--truncate <N>` apply **only** when `--format table` is selected.
+
+## 0.2.81 - 2025-11-04
+### Added
+- `list-kits` flags:
+  - `--csv`: write CSV to stdout
+  - `--md`: write GitHub‑flavoured Markdown table to stdout
+  - `--full`: show all columns/rows with no truncation (wide table)
+  - `--truncate <N>`: truncate string cells to N characters (ignored if `--full`)
+
+## 0.2.80 - 2025-11-04
+### Fixed
+- Prevented Polars pretty-printer overflow by capping `POLARS_TABLE_WIDTH=65535` and using `POLARS_FMT_MAX_ROWS=1000000`.
+
+## 0.2.79 - 2025-11-04
+### Changed
+- `list-kits` now prints a **Polars DataFrame** (not CSV) with **all columns** and **full cell width**.
+  Formatting is controlled via env vars set in the command (`POLARS_FMT_MAX_COLS`, `POLARS_FMT_STR_LEN`, etc.).
+
+## 0.2.78 - 2025-11-04
+### Fixed
+- Corrected `chemistry` values in `list-kits` output (Polars table):
+  - `LSK114`, `LSK114-XL`, `LSK109`, `LSK108`, `LSK308`, `NBD114.24`, `NBD114.96` → **ligation sequencing**
+  - `PCS114`, `PCB114.24` → **pcr-cdna sequencing**
+  - `MAB114.24` → **amplicon sequencing**
+  - Confirmed rapid kits remain **rapid sequencing** (`RBK114.24`, `RBK114.96`, `RPB114.24`).
+
 ## [0.2.38] - 2025-11-03
 - CLI: “chemistry” column now uses canonical labels (`BaseChemistry::label()` / `Display`).
 - Core: add `BaseChemistry::label()` + `Display` (stable human-readable names).
@@ -88,3 +147,7 @@
 - `kit.rs`: corrected `Provenance` type to `&'static str` for `source`.
 - `benchmark.rs`: now uses `(end, dist)` from `find_all_end`; removed incorrect `distance(end)` calls; unwrapped AC builder result; consistent `pos: Some(end)`.
 - `seqio.rs`: removed unused BAM record allocation.
+
+## 0.2.88
+### Fixed
+- Removed remaining orphan `} if done.load(..)` fragment following `tui_loop`.

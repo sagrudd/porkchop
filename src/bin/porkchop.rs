@@ -1,3 +1,4 @@
+//! Module `porkchop` — auto‑generated docs for porkchop.
 use clap::{Parser, Subcommand, ValueEnum};
 use polars::prelude::*;
 
