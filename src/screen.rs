@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::benchmark::{self, BenchmarkAlgo};
 use crate::kit::SeqKind;
@@ -154,8 +154,41 @@ fn kind_suffix(k: SeqKind) -> &'static str {
     }
 }
 
+fn revcomp(s: &str) -> String {
+    fn comp(c: u8) -> u8 {
+        match c {
+            b'A' | b'a' => b'T',
+            b'T' | b't' => b'A',
+            b'C' | b'c' => b'G',
+            b'G' | b'g' => b'C',
+            b'U' | b'u' => b'A',
+            b'R' | b'r' => b'N',
+            b'Y' | b'y' => b'N',
+            b'S' | b's' => b'N',
+            b'W' | b'w' => b'N',
+            b'K' | b'k' => b'N',
+            b'M' | b'm' => b'N',
+            b'B' | b'b' => b'N',
+            b'D' | b'd' => b'N',
+            b'H' | b'h' => b'N',
+            b'V' | b'v' => b'N',
+            _ => b'N',
+        }
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    for &b in bytes.iter().rev() {
+        out.push(comp(b));
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
 pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let records = Arc::new(collect_all_sequences());
+    let rec_map: std::collections::HashMap<String, String> = records.iter()
+        .map(|r| (r.name.to_string(), r.sequence.to_string()))
+        .collect();
+    let rec_map = Arc::new(rec_map);
 
     // Tallies
     let unit_tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -164,6 +197,7 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let screened = Arc::new(AtomicUsize::new(0));
     let unclassified = Arc::new(AtomicUsize::new(0));
     let skipped = Arc::new(AtomicUsize::new(0));
+    let reads_with_hits = Arc::new(AtomicUsize::new(0));
 
     // Optional prebuilt for ACMyers
     let prebuilt = if let BenchmarkAlgo::ACMyers = opts.algo {
@@ -180,11 +214,11 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let unclassified_ui = unclassified.clone();
     let skipped_ui = skipped.clone();
     let tick = Duration::from_secs(opts.tick_secs.max(1));
-    std::thread::spawn(move || {
-        let _ = tui_loop(unit_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, tick);
-    });
-
-    // Sampling params
+let rwh_ui = reads_with_hits.clone();
+std::thread::spawn(move || {
+    let _ = tui_loop(unit_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, rwh_ui, rec_map.clone(), tick);
+});
+// Sampling params
     let p = opts.fraction.clamp(0.0, 1.0);
     let threads = opts.threads;
 
@@ -230,6 +264,7 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     // Spawn classification workers in Rayon pool
     let unit_w = unit_tally.clone();
     let combo_w = combo_tally.clone();
+    let rwh = reads_with_hits.clone();
     let records_arc = records.clone();
     let prebuilt_c = prebuilt.clone();
     let algo = opts.algo;
@@ -248,6 +283,7 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
                 let done_c = done.clone();
                 let screened_wc = screened_c.clone();
                 let unclassified_wc = unclassified_c.clone();
+let rwh = reads_with_hits.clone();
                 s.spawn(move |_| {
                     loop {
                         let read = { let guard = rx_c.lock().unwrap(); guard.recv() };
@@ -262,11 +298,16 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
                             continue;
                         }
 
-                        // Tally individual hits
+                        // Tally individual hits (dedupe per read by (name, kind))
+                        rwh.fetch_add(1, Ordering::Relaxed);
                         {
-                            let mut g = unit_wc.lock().unwrap();
+                            let mut uniq = std::collections::HashSet::new();
                             for (name, kind, _is_rc, _pos) in &hits {
-                                *g.entry((name.clone(), *kind)).or_insert(0) += 1;
+                                uniq.insert((name.clone(), *kind));
+                            }
+                            let mut g = unit_wc.lock().unwrap();
+                            for key in uniq {
+                                *g.entry(key).or_insert(0) += 1;
                             }
                         }
 
@@ -391,8 +432,23 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
         serde_json::to_writer_pretty(&mut f, &combined)?;
     }
 
+    // Also print the kit-likelihood table to stdout as a wide Polars DataFrame
+    if let Ok(unit_map) = unit_tally.lock() {
+        if let Ok(df) = infer_kits_df(&*unit_map) {
+            // Ensure full-width display and no truncation for Polars 0.42
+            std::env::set_var("POLARS_FMT_TABLE_FORMATTING", "UTF8_FULL");
+            std::env::set_var("POLARS_FMT_MAX_COLS", "100000");
+            std::env::set_var("POLARS_FMT_MAX_ROWS", "1000000");
+            std::env::set_var("POLARS_FMT_STR_LEN", "1000000");
+            std::env::set_var("POLARS_TABLE_WIDTH", "65535");
+            println!("\n=== Sequencing kit prediction ===");
+            println!("{}", df);
+        }
+    }
+
     Ok(())
 }
+
 
 fn tui_loop(
     unit: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
@@ -401,7 +457,9 @@ fn tui_loop(
     screened: Arc<AtomicUsize>,
     unclassified: Arc<AtomicUsize>,
     skipped: Arc<AtomicUsize>,
-    tick: Duration
+    reads_with_hits: Arc<AtomicUsize>,
+    rec_map: Arc<HashMap<String, String>>,
+    tick: Duration,
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
@@ -409,13 +467,22 @@ fn tui_loop(
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
-    let start = Instant::now();
-
     loop {
         terminal.draw(|f| {
             let size = f.size();
-            let block = Block::default().title("porkchop::screen — observed synthetic sequences").borders(Borders::ALL);
+            let block = Block::default()
+                .title("porkchop::screen — observed synthetic sequences")
+                .borders(Borders::ALL);
             f.render_widget(block, size);
+
+            let layout = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Length(3),
+                    ratatui::layout::Constraint::Min(3),
+                ])
+                .margin(1)
+                .split(size);
 
             // Header stats
             let hits_sum: usize = {
@@ -427,25 +494,41 @@ fn tui_loop(
             let uncls = unclassified.load(Ordering::Relaxed) as f64;
             let skip = skipped.load(Ordering::Relaxed) as f64;
             let tot_seen = scr + skip;
+            let rwh = reads_with_hits.load(Ordering::Relaxed) as f64;
             let hp = if scr > 0.0 { 100.0 * hits / scr } else { 0.0 };
             let up = if scr > 0.0 { 100.0 * uncls / scr } else { 0.0 };
             let sp = if tot_seen > 0.0 { 100.0 * skip / tot_seen } else { 0.0 };
+            let rwp = if scr > 0.0 { 100.0 * rwh / scr } else { 0.0 };
+
             let stats = format!(
-                "screened: {}  hits: {} ({:.1}%)  unclassified: {} ({:.1}%)    skipped (not sampled): {} ({:.1}%)",
-                scr as u64, hits_sum as u64, hp, unclassified.load(Ordering::Relaxed), up, skipped.load(Ordering::Relaxed), sp
+                "screened: {}  total hits: {} ({:.1} hits/read)  reads with ≥1 hit: {} ({:.1}%)    unclassified: {} ({:.1}%)    skipped (not sampled): {} ({:.1}%)",
+                scr as u64, hits_sum as u64, if scr > 0.0 { hits / scr } else { 0.0 },
+                reads_with_hits.load(Ordering::Relaxed), rwp,
+                unclassified.load(Ordering::Relaxed), up,
+                skipped.load(Ordering::Relaxed), sp
             );
             let stats_para = ratatui::widgets::Paragraph::new(stats);
-            let stats_area = Rect::new(size.x + 2, size.y + 1, size.width.saturating_sub(4), 1);
-            f.render_widget(stats_para, stats_area);
+            f.render_widget(stats_para, layout[0]);
 
-            // Top individual sequences (name, kind, count)
-            let mut unit_rows: Vec<Row> = Vec::new();
+            let cols = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Horizontal)
+                .constraints([
+                    ratatui::layout::Constraint::Percentage(50),
+                    ratatui::layout::Constraint::Percentage(50),
+                ])
+                .split(layout[1]);
+
+            // Top synthetic sequences
             let mut unit_items: Vec<(String, SeqKind, usize)> = {
                 let g = unit.lock().unwrap();
                 g.iter().map(|((name, kind), c)| (name.clone(), *kind, *c)).collect()
             };
             unit_items.sort_by(|a, b| b.2.cmp(&a.2));
+
+            let mut unit_rows: Vec<Row> = Vec::new();
             for (name, kind, c) in unit_items.into_iter().take(12) {
+                let seq = rec_map.get(&name).cloned().unwrap_or_else(|| "".to_string());
+                let rc = if seq.is_empty() { String::new() } else { revcomp(&seq) };
                 unit_rows.push(Row::new(vec![
                     name,
                     match kind {
@@ -454,63 +537,57 @@ fn tui_loop(
                         SeqKind::Barcode => "Barcode".to_string(),
                         SeqKind::Flank => "Flank".to_string(),
                     },
+                    seq,
+                    rc,
                     format!("{}", c),
                 ]));
             }
             let unit_table = Table::new(
                 unit_rows,
-                [Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)]
+                [
+                    ratatui::layout::Constraint::Percentage(22),
+                    ratatui::layout::Constraint::Percentage(14),
+                    ratatui::layout::Constraint::Percentage(28),
+                    ratatui::layout::Constraint::Percentage(28),
+                    ratatui::layout::Constraint::Percentage(8),
+                ],
             )
-                .header(Row::new(vec!["name", "kind", "count"]).bold())
-                .block(Block::default().borders(Borders::ALL).title("Top synthetic sequences"));
+            .header(Row::new(vec!["name", "kind", "(+)", "(-)", "reads"]).bold())
+            .block(Block::default().borders(Borders::ALL).title("Top synthetic sequences"));
+            f.render_widget(unit_table, cols[0]);
 
-            // Top combos table (aggregate identifiers)
-            let mut combo_rows: Vec<Row> = Vec::new();
+            // Top co-occurrence
             let mut combo_items: Vec<(String, usize)> = {
                 let g = combos.lock().unwrap();
                 g.iter().map(|(k, v)| (k.clone(), *v)).collect()
             };
             combo_items.sort_by(|a, b| b.1.cmp(&a.1));
+
+            let mut combo_rows: Vec<Row> = Vec::new();
             for (id, c) in combo_items.into_iter().take(12) {
                 combo_rows.push(Row::new(vec![id, format!("{}", c)]));
             }
             let combo_table = Table::new(
                 combo_rows,
-                [Constraint::Percentage(75), Constraint::Percentage(25)]
+                [
+                    ratatui::layout::Constraint::Percentage(86),
+                    ratatui::layout::Constraint::Percentage(14),
+                ],
             )
-                .header(Row::new(vec!["aggregate identifier", "count"]).bold())
-                .block(Block::default().borders(Borders::ALL).title("Top co-occurrence contexts"));
-
-            // Layout: header line + two stacked tables + footer
-            let unit_area = Rect::new(size.x + 2, size.y + 3, size.width.saturating_sub(4), (size.height.saturating_sub(7)) / 2);
-            let combo_area = Rect::new(size.x + 2, unit_area.y + unit_area.height, size.width.saturating_sub(4), (size.height.saturating_sub(7)) - unit_area.height);
-            f.render_widget(unit_table, unit_area);
-            f.render_widget(combo_table, combo_area);
-
-            // Footer rate
-            let elapsed = start.elapsed().as_secs_f64().max(1e-6);
-            let rate = (screened.load(Ordering::Relaxed) as f64) / elapsed;
-            let footer = ratatui::widgets::Paragraph::new(format!("rate: {:.1} screened/s   (q/Esc to quit)", rate));
-            let farea = Rect::new(size.x + 2, size.y + size.height.saturating_sub(2), size.width.saturating_sub(4), 1);
-            f.render_widget(footer, farea);
+            .header(Row::new(vec!["aggregate identifier", "count"]).bold())
+            .block(Block::default().borders(Borders::ALL).title("Top co-occurrence contexts"));
+            f.render_widget(combo_table, cols[1]);
         })?;
 
-        // Quit on 'q' or Esc
-        if event::poll(tick)? {
+        // Keys
+        if crossterm::event::poll(tick)? {
             if let Event::Key(k) = event::read()? {
-                if k.code == KeyCode::Char('q') || k.code == KeyCode::Esc {
-                    done.store(true, Ordering::SeqCst);
-                    disable_raw_mode()?;
-    // Build a Polars table ranking likely kits by probability
-    if let Ok(unit_map) = unit.lock() {
-        if let Ok(df) = infer_kits_df(&*unit_map) {
-            eprintln!("\nMost likely kits (probabilities from weighted evidence):");
-            eprintln!("{:?}", df);
-        }
-    }
-
-                    crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
-                    std::process::exit(0);
+                match k.code {
+                    KeyCode::Char('q') | KeyCode::Esc => {
+                        done.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -522,12 +599,5 @@ fn tui_loop(
 
     disable_raw_mode()?;
     crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
-    // After TUI exits, print predicted kits
-    if let Ok(unit_map) = unit.lock() {
-        if let Ok(df) = infer_kits_df(&*unit_map) {
-            println!("\nMost likely kits (probabilities from weighted evidence):");
-            println!("{:?}", df);
-        }
-    }
     Ok(())
 }

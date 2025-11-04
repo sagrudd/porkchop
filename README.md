@@ -76,3 +76,8 @@ MPL-2.0
 - `--format md`  → Markdown table to stdout
 - `--format table` (default) → Polars pretty table
   - Use `--full` for no truncation, or `--truncate N` to limit string length.
+
+### `screen` updates
+- Per‑read counts (deduped) in the "Top synthetic sequences" panel
+- (+)/(-) columns show sequence and reverse complement
+- Pretty-printed Polars DataFrame for kit analysis after run
