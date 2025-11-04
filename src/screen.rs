@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::benchmark::{self, BenchmarkAlgo};
 use crate::kit::SeqKind;
@@ -221,9 +221,9 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let skipped_ui = skipped.clone();
     let tick = Duration::from_secs(opts.tick_secs.max(1));
 let rwh_ui = reads_with_hits.clone();
-std::thread::spawn(move || {
-    let _ = tui_loop(unit_ui, fwd_ui, rev_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, rwh_ui, rec_map.clone(), tick);
-});
+    let mut ui_handle_opt: Option<std::thread::JoinHandle<()>> = Some(std::thread::spawn(move || {
+        let _ = tui_loop(unit_ui, fwd_ui, rev_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, rwh_ui, rec_map.clone(), tick);
+}));
 // Sampling params
     let p = opts.fraction.clamp(0.0, 1.0);
     let threads = opts.threads;
@@ -449,7 +449,15 @@ let rwh = reads_with_hits.clone();
             "kits": kits_json
         });
         let mut f = std::fs::File::create(path)?;
-        serde_json::to_writer_pretty(&mut f, &combined)?;
+
+    // Ensure the TUI is fully torn down before printing tables (idempotent)
+    done.store(true, Ordering::SeqCst);
+    if let Some(h) = ui_handle_opt.take() {
+        let _ = h.join();
+    }
+    let _ = crossterm::terminal::disable_raw_mode();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show, crossterm::terminal::LeaveAlternateScreen);
+serde_json::to_writer_pretty(&mut f, &combined)?;
     }
 
     // Also print the kit-likelihood table to stdout as a wide Polars DataFrame
@@ -461,7 +469,15 @@ let rwh = reads_with_hits.clone();
             std::env::set_var("POLARS_FMT_MAX_ROWS", "1000000");
             std::env::set_var("POLARS_FMT_STR_LEN", "1000000");
             std::env::set_var("POLARS_TABLE_WIDTH", "65535");
-            println!("\n=== Sequencing kit prediction (p > {:.3}) ===", opts.kit_prob_min);
+
+    // Ensure the TUI is fully torn down before printing tables (idempotent)
+    done.store(true, Ordering::SeqCst);
+    if let Some(h) = ui_handle_opt.take() {
+        let _ = h.join();
+    }
+    let _ = crossterm::terminal::disable_raw_mode();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show, crossterm::terminal::LeaveAlternateScreen);
+println!("\n=== Sequencing kit prediction (p > {:.3}) ===", opts.kit_prob_min);
 // Filter to only show kits with probability above user threshold
 let df = match df.column("probability") {
     Ok(prob) => {
@@ -505,6 +521,7 @@ fn tui_loop(
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
+    let started = Instant::now();
 
     loop {
         terminal.draw(|f| {
@@ -519,6 +536,7 @@ fn tui_loop(
                 .constraints([
                     ratatui::layout::Constraint::Length(3),
                     ratatui::layout::Constraint::Min(3),
+                    ratatui::layout::Constraint::Length(1),
                 ])
                 .margin(1)
                 .split(size);
@@ -617,7 +635,15 @@ fn tui_loop(
             .header(Row::new(vec!["aggregate identifier", "count"]).bold())
             .block(Block::default().borders(Borders::ALL).title("Top co-occurrence contexts"));
             f.render_widget(combo_table, cols[1]);
-        })?;
+        
+            // Footer: performance indicator
+            let elapsed = started.elapsed().as_secs_f64();
+            let rate = if elapsed > 0.0 { (screened.load(Ordering::Relaxed) as f64) / elapsed } else { 0.0 };
+            let footer = format!("rate: {:.1} seq/s   elapsed: {:.1}s   screened: {}",
+                                 rate, elapsed, screened.load(Ordering::Relaxed));
+            let foot_para = ratatui::widgets::Paragraph::new(footer);
+            f.render_widget(foot_para, layout[2]);
+})?;
 
         // Keys
         if crossterm::event::poll(tick)? {
@@ -637,7 +663,8 @@ fn tui_loop(
         }
     }
 
-    disable_raw_mode()?;
-    crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+    terminal.show_cursor().ok();
+    disable_raw_mode().ok();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show, crossterm::terminal::LeaveAlternateScreen);
     Ok(())
 }
