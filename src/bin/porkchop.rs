@@ -82,6 +82,9 @@ enum Commands {
         /// Write aggregate identifiers and counts to JSON file
         #[arg(long)]
         json: Option<String>,
+           /// Minimum probability to display a kit (default: 0.1)
+        #[arg(long, default_value_t = 0.1)]
+        kit_prob_min: f64,
     },
 }
 
@@ -157,7 +160,7 @@ let truth_map = match truth {
             }
         }
 
-        Commands::Screen { files, algorithm, max_dist, fraction, tick, threads, json } => {
+        Commands::Screen { files, algorithm, max_dist, fraction, tick, threads, json , kit_prob_min } => {
             let algo = match algorithm.parse::<porkchop::benchmark::BenchmarkAlgo>() {
                 Ok(a) => a,
                 Err(_) => porkchop::benchmark::BenchmarkAlgo::Edlib,
@@ -170,7 +173,7 @@ let truth_map = match truth {
                 algo,
                 max_dist,
                 json,
-            };
+            kit_prob_min, };
             if let Err(e) = porkchop::screen::run_screen(opts) {
                 eprintln!("screen error: {e}");
             }

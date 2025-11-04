@@ -134,6 +134,7 @@ pub struct ScreenOpts {
     pub algo: BenchmarkAlgo,
     pub max_dist: usize,
     pub json: Option<String>,
+    pub kit_prob_min: f64,
 }
 
 fn collect_all_sequences() -> Vec<crate::kit::SequenceRecord> {
@@ -441,7 +442,19 @@ let rwh = reads_with_hits.clone();
             std::env::set_var("POLARS_FMT_MAX_ROWS", "1000000");
             std::env::set_var("POLARS_FMT_STR_LEN", "1000000");
             std::env::set_var("POLARS_TABLE_WIDTH", "65535");
-            println!("\n=== Sequencing kit prediction ===");
+            println!("\n=== Sequencing kit prediction (p > {:.3}) ===", opts.kit_prob_min);
+            // Filter to only show kits with probability above user threshold
+            let df = match df.column("probability") {
+                Ok(prob) => {
+                    if let Ok(prob) = prob.f64() {
+                        let mask = prob.gt(opts.kit_prob_min);
+                        df.filter(&mask).unwrap_or(df.clone())
+                    } else {
+                        df.clone()
+                    }
+                }
+                Err(_) => df.clone(),
+            };
             println!("{}", df);
         }
     }
