@@ -184,6 +184,7 @@ fn revcomp(s: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
+
 pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let records = Arc::new(collect_all_sequences());
     let rec_map: std::collections::HashMap<String, String> = records.iter()
@@ -194,6 +195,8 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     // Tallies
     let unit_tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
     let combo_tally: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let fwd_tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let rev_tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
     let done = Arc::new(AtomicBool::new(false));
     let screened = Arc::new(AtomicUsize::new(0));
     let unclassified = Arc::new(AtomicUsize::new(0));
@@ -209,6 +212,8 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
 
     // UI thread
     let unit_ui = unit_tally.clone();
+    let fwd_ui = fwd_tally.clone();
+    let rev_ui = rev_tally.clone();
     let combo_ui = combo_tally.clone();
     let done_ui = done.clone();
     let screened_ui = screened.clone();
@@ -217,7 +222,7 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let tick = Duration::from_secs(opts.tick_secs.max(1));
 let rwh_ui = reads_with_hits.clone();
 std::thread::spawn(move || {
-    let _ = tui_loop(unit_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, rwh_ui, rec_map.clone(), tick);
+    let _ = tui_loop(unit_ui, fwd_ui, rev_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, rwh_ui, rec_map.clone(), tick);
 });
 // Sampling params
     let p = opts.fraction.clamp(0.0, 1.0);
@@ -264,6 +269,8 @@ std::thread::spawn(move || {
 
     // Spawn classification workers in Rayon pool
     let unit_w = unit_tally.clone();
+    let fwd_w = fwd_tally.clone();
+    let rev_w = rev_tally.clone();
     let combo_w = combo_tally.clone();
     let rwh = reads_with_hits.clone();
     let records_arc = records.clone();
@@ -278,6 +285,8 @@ std::thread::spawn(move || {
             for _ in 0..threads_n {
                 let rx_c = rx.clone();  // Arc<Mutex<Receiver<NARead>>>
                 let unit_wc = unit_w.clone();
+                let fwd_wc = fwd_w.clone();
+                let rev_wc = rev_w.clone();
                 let combo_wc = combo_w.clone();
                 let records_c = records_arc.clone();
                 let pre_c = prebuilt_c.clone();
@@ -309,6 +318,16 @@ let rwh = reads_with_hits.clone();
                             let mut g = unit_wc.lock().unwrap();
                             for key in uniq {
                                 *g.entry(key).or_insert(0) += 1;
+                            }
+                        }
+
+                        // Strand-specific counters
+                        {
+                            let mut gf = fwd_wc.lock().unwrap();
+                            let mut gr = rev_wc.lock().unwrap();
+                            for (name, kind, is_rc, _pos) in &hits {
+                                if *is_rc { *gr.entry((name.clone(), *kind)).or_insert(0) += 1; }
+                                else { *gf.entry((name.clone(), *kind)).or_insert(0) += 1; }
                             }
                         }
 
@@ -470,6 +489,8 @@ println!("{}", df);
 
 fn tui_loop(
     unit: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
+    fwd: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
+    rev: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
     combos: Arc<Mutex<HashMap<String, usize>>>,
     done: Arc<AtomicBool>,
     screened: Arc<AtomicUsize>,
@@ -545,8 +566,8 @@ fn tui_loop(
 
             let mut unit_rows: Vec<Row> = Vec::new();
             for (name, kind, c) in unit_items.into_iter().take(12) {
-                let seq = rec_map.get(&name).cloned().unwrap_or_else(|| "".to_string());
-                let rc = if seq.is_empty() { String::new() } else { revcomp(&seq) };
+                let f = { let g = fwd.lock().unwrap(); *g.get(&(name.clone(), kind)).unwrap_or(&0) };
+                let r = { let g = rev.lock().unwrap(); *g.get(&(name.clone(), kind)).unwrap_or(&0) };
                 unit_rows.push(Row::new(vec![
                     name,
                     match kind {
@@ -555,19 +576,20 @@ fn tui_loop(
                         SeqKind::Barcode => "Barcode".to_string(),
                         SeqKind::Flank => "Flank".to_string(),
                     },
-                    seq,
-                    rc,
+                    format!("{}", f),
+                    format!("{}", r),
                     format!("{}", c),
                 ]));
             }
+
             let unit_table = Table::new(
                 unit_rows,
                 [
                     ratatui::layout::Constraint::Percentage(22),
                     ratatui::layout::Constraint::Percentage(14),
-                    ratatui::layout::Constraint::Percentage(28),
-                    ratatui::layout::Constraint::Percentage(28),
-                    ratatui::layout::Constraint::Percentage(8),
+                    ratatui::layout::Constraint::Percentage(14),
+                    ratatui::layout::Constraint::Percentage(14),
+                    ratatui::layout::Constraint::Percentage(10),
                 ],
             )
             .header(Row::new(vec!["name", "kind", "(+)", "(-)", "reads"]).bold())
