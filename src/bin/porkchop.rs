@@ -85,6 +85,9 @@ enum Commands {
            /// Minimum probability to display a kit (default: 0.1)
         #[arg(long, default_value_t = 0.1)]
         kit_prob_min: f64,
+            /// Write an HTML report to this path
+        #[arg(long)]
+        html: Option<String>,
     },
 }
 
@@ -160,7 +163,7 @@ let truth_map = match truth {
             }
         }
 
-        Commands::Screen { files, algorithm, max_dist, fraction, tick, threads, json , kit_prob_min } => {
+        Commands::Screen { files, algorithm, max_dist, fraction, tick, threads, json, kit_prob_min, html } => {
             let algo = match algorithm.parse::<porkchop::benchmark::BenchmarkAlgo>() {
                 Ok(a) => a,
                 Err(_) => porkchop::benchmark::BenchmarkAlgo::Edlib,
@@ -173,7 +176,9 @@ let truth_map = match truth {
                 algo,
                 max_dist,
                 json,
-            kit_prob_min, };
+                kit_prob_min,
+                html,
+            };
             if let Err(e) = porkchop::screen::run_screen(opts) {
                 eprintln!("screen error: {e}");
             }

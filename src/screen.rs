@@ -135,6 +135,7 @@ pub struct ScreenOpts {
     pub max_dist: usize,
     pub json: Option<String>,
     pub kit_prob_min: f64,
+    pub html: Option<String>,
 }
 
 fn collect_all_sequences() -> Vec<crate::kit::SequenceRecord> {
@@ -155,6 +156,7 @@ fn kind_suffix(k: SeqKind) -> &'static str {
     }
 }
 
+
 fn revcomp(s: &str) -> String {
     fn comp(c: u8) -> u8 {
         match c {
@@ -162,17 +164,6 @@ fn revcomp(s: &str) -> String {
             b'T' | b't' => b'A',
             b'C' | b'c' => b'G',
             b'G' | b'g' => b'C',
-            b'U' | b'u' => b'A',
-            b'R' | b'r' => b'N',
-            b'Y' | b'y' => b'N',
-            b'S' | b's' => b'N',
-            b'W' | b'w' => b'N',
-            b'K' | b'k' => b'N',
-            b'M' | b'm' => b'N',
-            b'B' | b'b' => b'N',
-            b'D' | b'd' => b'N',
-            b'H' | b'h' => b'N',
-            b'V' | b'v' => b'N',
             _ => b'N',
         }
     }
@@ -499,10 +490,126 @@ println!("{}", df);
         }
     }
 
-    Ok(())
+    
+    // HTML report: write after TUI teardown (normal path)
+    if let Some(html_path) = &opts.html {
+        if let (Ok(unit_map), Ok(fwd_map), Ok(rev_map), Ok(combo_map)) =
+            (unit_tally.lock(), fwd_tally.lock(), rev_tally.lock(), combo_tally.lock())
+        {
+            if let Ok(mut kits_df) = infer_kits_df(&*unit_map) {
+                if let Ok(prob) = kits_df.column("probability").and_then(|c| c.f64()) {
+                    let mask = prob.gt(opts.kit_prob_min);
+                    if let Ok(fdf) = kits_df.filter(&mask) { kits_df = fdf; }
+                }
+                let scrn  = screened.load(Ordering::Relaxed) as usize;
+                let uncls = unclassified.load(Ordering::Relaxed) as usize;
+                let skipd = skipped.load(Ordering::Relaxed) as usize;
+                let rwh   = reads_with_hits.load(Ordering::Relaxed) as usize;
+                let _ = write_html_report(
+                    html_path,
+                    &opts,
+                    &*unit_map, &*fwd_map, &*rev_map, &*combo_map,
+                    &kits_df,
+                    scrn, uncls, skipd, rwh,
+                );
+            }
+        }
+    }
+Ok(())
 }
 
 
+
+
+fn write_html_report(
+    path: &str,
+    opts: &ScreenOpts,
+    unit: &std::collections::HashMap<(String, SeqKind), usize>,
+    fwd: &std::collections::HashMap<(String, SeqKind), usize>,
+    rev: &std::collections::HashMap<(String, SeqKind), usize>,
+    combos: &std::collections::HashMap<String, usize>,
+    kits_df: &polars::prelude::DataFrame,
+    screened: usize,
+    unclassified: usize,
+    skipped: usize,
+    reads_with_hits: usize,
+) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+    fn esc(s: &str) -> String {
+        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    }
+    fn kind_str(k: SeqKind) -> &'static str {
+        match k {
+            SeqKind::AdapterTop | SeqKind::AdapterBottom => "Adapter",
+            SeqKind::Primer => "Primer",
+            SeqKind::Barcode => "Barcode",
+            SeqKind::Flank => "Flank",
+        }
+    }
+    let mut html = String::new();
+    html.push_str(r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><title>porkchop :: screen report</title>
+<style>
+body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,"Noto Sans",sans-serif;line-height:1.45;margin:24px;}
+h1{margin:0 0 8px 0} h2{margin-top:28px;border-bottom:1px solid #ddd;padding-bottom:4px}
+table{border-collapse:collapse;width:100%;margin:12px 0;}
+th,td{border:1px solid #ddd;padding:6px 8px;font-size:14px;vertical-align:top}
+th{background:#f6f8fa;text-align:left}
+code{background:#f6f8fa;padding:1px 3px;border-radius:4px}
+.meta{color:#444}
+.small{color:#666;font-size:13px}
+</style></head><body>"#);
+    html.push_str(r#"<h1>porkchop — Screen Report</h1>"#);
+    html.push_str(r#"<div class='meta'><h2>Run Parameters</h2><table><tbody>"#);
+    let _ = write!(html, "<tr><th>Files</th><td>{}</td></tr>", esc(&format!("{:?}", &opts.files)));
+    let _ = write!(html, "<tr><th>Algorithm(s)</th><td>{}</td></tr>", esc(&format!("{:?}", &opts.algo)));
+    let _ = write!(html, "<tr><th>Threads</th><td>{}</td></tr>", esc(&format!("{:?}", &opts.threads)));
+    let _ = write!(html, "<tr><th>Sampling fraction</th><td>{:.3}</td></tr>", opts.fraction);
+    let _ = write!(html, "<tr><th>TUI tick (s)</th><td>{}</td></tr>", opts.tick_secs);
+    let _ = write!(html, "<tr><th>Max distance</th><td>{}</td></tr>", opts.max_dist);
+    let _ = write!(html, "<tr><th>Kit prob min</th><td>{:.3}</td></tr>", opts.kit_prob_min);
+    let _ = write!(html, "<tr><th>JSON</th><td>{}</td></tr>", esc(&format!("{:?}", &opts.json)));
+    let _ = write!(html, "<tr><th>HTML</th><td>{}</td></tr>", esc(&format!("{:?}", &opts.html)));
+    let _ = write!(html, "<tr><th>Screened</th><td>{}</td></tr>", screened);
+    let _ = write!(html, "<tr><th>Reads with &ge;1 hit</th><td>{}</td></tr>", reads_with_hits);
+    let _ = write!(html, "<tr><th>Unclassified</th><td>{}</td></tr>", unclassified);
+    let _ = write!(html, "<tr><th>Skipped</th><td>{}</td></tr>", skipped);
+    html.push_str("</tbody></table>");
+    html.push_str("<p class='small'>This report summarizes synthetic sequence detections. In <em>Top synthetic sequences</em>, <code>(+)</code> and <code>(-)</code> are raw hit counts on forward and reverse strands; <code>reads</code> is per-read deduped. <em>Top co-occurrence contexts</em> aggregates motif sets in the same reads. <em>Sequencing kit predictions</em> are estimated from motif evidence; rows respect your probability threshold.</p>");
+    html.push_str(r#"<h2>Top synthetic sequences (complete)</h2>
+<table><thead><tr><th>name</th><th>kind</th><th>(+)</th><th>(-)</th><th>reads</th></tr></thead><tbody>"#);
+    let mut items: Vec<_> = unit.iter().collect();
+    items.sort_by_key(|((_n,_k), c)| std::cmp::Reverse(*c));
+    for ((name, kind), reads) in items {
+        let fv = fwd.get(&(name.clone(), *kind)).copied().unwrap_or(0);
+        let rv = rev.get(&(name.clone(), *kind)).copied().unwrap_or(0);
+        let _ = write!(html, "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>", esc(name), kind_str(*kind), fv, rv, reads);
+    }
+    html.push_str("</tbody></table>");
+    html.push_str(r#"<h2>Top co-occurrence contexts (complete)</h2>
+<table><thead><tr><th>aggregate identifier</th><th>count</th></tr></thead><tbody>"#);
+    let mut ctx: Vec<_> = combos.iter().collect();
+    ctx.sort_by_key(|(_k, v)| std::cmp::Reverse(**v));
+    for (k, v) in ctx {
+        let _ = write!(html, "<tr><td>{}</td><td>{}</td></tr>", esc(k), v);
+    }
+    html.push_str("</tbody></table>");
+    html.push_str(r#"<h2>Sequencing kit predictions (filtered)</h2><table><thead><tr>"#);
+    for col in kits_df.get_columns() {
+        let _ = write!(html, "<th>{}</th>", esc(col.name()));
+    }
+    html.push_str("</tr></thead><tbody>");
+    let rows = kits_df.height();
+    for i in 0..rows {
+        html.push_str("<tr>");
+        for col in kits_df.get_columns() {
+            let val = match col.get(i) { Ok(v) => v.to_string(), Err(_) => String::new() };
+            let _ = write!(html, "<td>{}</td>", esc(&val));
+        }
+        html.push_str("</tr>");
+    }
+    html.push_str("</tbody></table></body></html>");
+    std::fs::write(path, html)
+}
 fn tui_loop(
     unit: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
     fwd: Arc<Mutex<HashMap<(String, SeqKind), usize>>>,
