@@ -35,7 +35,7 @@ fn weight_of(kind: SeqKind) -> f64 {
 }
 
 fn infer_kits_df(tally: &std::collections::HashMap<(String, SeqKind), usize>) -> polars::prelude::PolarsResult<DataFrame> {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::cmp::Ordering;
 
     let kits = crate::list_supported_kits();
@@ -149,42 +149,11 @@ fn collect_all_sequences() -> Vec<crate::kit::SequenceRecord> {
     v
 }
 
-fn kind_suffix(k: SeqKind) -> &'static str {
-    match k {
-        SeqKind::Primer => "target",
-        SeqKind::Flank => "flank",
-        SeqKind::Barcode => "barcode",
-        SeqKind::AdapterTop | SeqKind::AdapterBottom => "adapter",
-    }
-}
-
-
-fn revcomp(s: &str) -> String {
-    fn comp(c: u8) -> u8 {
-        match c {
-            b'A' | b'a' => b'T',
-            b'T' | b't' => b'A',
-            b'C' | b'c' => b'G',
-            b'G' | b'g' => b'C',
-            _ => b'N',
-        }
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    for &b in bytes.iter().rev() {
-        out.push(comp(b));
-    }
-    String::from_utf8(out).unwrap_or_default()
-}
 
 
 /// fn `run_screen` — auto‑generated rustdoc.
 pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let records = Arc::new(collect_all_sequences());
-    let rec_map: std::collections::HashMap<String, String> = records.iter()
-        .map(|r| (r.name.to_string(), r.sequence.to_string()))
-        .collect();
-    let rec_map = Arc::new(rec_map);
 
     // Tallies
     let unit_tally: Arc<Mutex<HashMap<(String, SeqKind), usize>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -216,13 +185,10 @@ pub fn run_screen(opts: ScreenOpts) -> anyhow::Result<()> {
     let tick = Duration::from_secs(opts.tick_secs.max(1));
 let rwh_ui = reads_with_hits.clone();
     let mut ui_handle_opt: Option<std::thread::JoinHandle<()>> = Some(std::thread::spawn(move || {
-        let _ = tui_loop(unit_ui, fwd_ui, rev_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, rwh_ui, rec_map.clone(), tick);
+        let _ = tui_loop(unit_ui, fwd_ui, rev_ui, combo_ui, done_ui, screened_ui, unclassified_ui, skipped_ui, rwh_ui, tick);
 }));
 // Sampling params
     let p = opts.fraction.clamp(0.0, 1.0);
-    let threads = opts.threads;
-
-
     // Build a dedicated Rayon pool for classification
     let threads_n = opts.threads.unwrap_or_else(num_cpus::get).max(1);
     let pool = ThreadPoolBuilder::new().num_threads(threads_n).build()?;
@@ -266,7 +232,6 @@ let rwh_ui = reads_with_hits.clone();
     let fwd_w = fwd_tally.clone();
     let rev_w = rev_tally.clone();
     let combo_w = combo_tally.clone();
-    let rwh = reads_with_hits.clone();
     let records_arc = records.clone();
     let prebuilt_c = prebuilt.clone();
     let algo = opts.algo;
@@ -623,7 +588,6 @@ fn tui_loop(
     unclassified: Arc<AtomicUsize>,
     skipped: Arc<AtomicUsize>,
     reads_with_hits: Arc<AtomicUsize>,
-    rec_map: Arc<HashMap<String, String>>,
     tick: Duration,
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
@@ -662,7 +626,6 @@ fn tui_loop(
             let skip = skipped.load(Ordering::Relaxed) as f64;
             let tot_seen = scr + skip;
             let rwh = reads_with_hits.load(Ordering::Relaxed) as f64;
-            let hp = if scr > 0.0 { 100.0 * hits / scr } else { 0.0 };
             let up = if scr > 0.0 { 100.0 * uncls / scr } else { 0.0 };
             let sp = if tot_seen > 0.0 { 100.0 * skip / tot_seen } else { 0.0 };
             let rwp = if scr > 0.0 { 100.0 * rwh / scr } else { 0.0 };

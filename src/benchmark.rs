@@ -13,7 +13,7 @@
 //! The benchmarking entrypoint is [`benchmark_file`].
 
 use std::time::{Duration, Instant};
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::Path;
 use std::collections::HashMap;
@@ -409,7 +409,7 @@ pub fn classify_all(
                     let res = edlibAlign(q.as_ptr() as *const i8, q.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
                     let mut matched = false;
                     if res.editDistance >= 0 && res.numLocations > 0 {
-                        let spos = unsafe { *res.startLocations } as usize;
+                        let spos = *res.startLocations as usize;
                         out.push((r.name.to_string(), r.kind, false, spos));
                         matched = true;
                     }
@@ -419,7 +419,7 @@ pub fn classify_all(
                         let rc = revcomp_bytes(r.sequence.as_bytes());
                         let res2 = edlibAlign(rc.as_ptr() as *const i8, rc.len() as i32, seq.as_ptr() as *const i8, seq.len() as i32, cfg);
                         if res2.editDistance >= 0 && res2.numLocations > 0 {
-                            let spos = unsafe { *res2.startLocations } as usize;
+                            let spos = *res2.startLocations as usize;
                             out.push((r.name.to_string(), r.kind, true, spos));
                         }
                         edlibFreeAlignResult(res2);

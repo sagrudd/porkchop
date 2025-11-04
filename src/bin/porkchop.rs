@@ -205,7 +205,7 @@ fn cmd_list_kits(format: OutputFormat, full: bool, truncate: Option<usize>) {
 
     match format {
         OutputFormat::Csv => {
-            let mut w = CsvWriter::new(std::io::stdout());
+            let w = CsvWriter::new(std::io::stdout());
             w.include_header(true).finish(&mut df.clone()).expect("write csv");
         }
         OutputFormat::Md => {
@@ -233,7 +233,6 @@ fn cmd_list_kits(format: OutputFormat, full: bool, truncate: Option<usize>) {
 }
 
 fn print_df_markdown(df: &DataFrame) {
-    use polars::prelude::*;
 
     let cols = df.get_columns();
     if cols.is_empty() {
