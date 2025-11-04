@@ -16,6 +16,23 @@ struct Cli {
 enum OutputFormat { Csv, Md, Table }
 #[derive(Subcommand)]
 enum Commands {
+
+    /// Clean sequencing files and show a live dashboard of clip modalities
+    Clean {
+        /// Thread count (0 = auto / all)
+        #[arg(short = 't', long, default_value_t = 0)]
+        threads: usize,
+        /// Kit id (must match a known ONT kit, e.g. "LSK114")
+        #[arg(short, long)]
+        kit: String,
+        /// Output FASTQ.GZ path
+        #[arg(short, long, value_name = "OUT.fastq.gz")]
+        output: std::path::PathBuf,
+        /// One or more input files (SAM, BAM, FASTQ, FASTQ.GZ)
+        #[arg(value_name = "FILES", required = true)]
+        files: Vec<std::path::PathBuf>,
+    },
+
     /// List all supported kits
     ListKits {
         /// Output format: csv | md | table
@@ -90,34 +107,19 @@ enum Commands {
         #[arg(long)]
         html: Option<String>,
     },
-    /// Clean sequencing files (SAM/BAM/FASTQ/FASTQ.GZ) with kit-aware validation
-    Clean {
-        /// Thread count (0 = auto / all)
-        #[arg(short = 't', long, default_value_t = 0)]
-        threads: usize,
-        /// Kit id (must match a known ONT kit, e.g. "LSK114")
-        #[arg(short, long)]
-        kit: String,
-        /// Output FASTQ.GZ path
-        #[arg(short, long, value_name = "OUT.fastq.gz")]
-        output: std::path::PathBuf,
-        /// One or more input files (SAM, BAM, FASTQ, or FASTQ.GZ)
-        #[arg(value_name = "FILES", required = true)]
-        files: Vec<std::path::PathBuf>,
-    },
-
 }
 
 fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        
-        Commands::Clean { threads, kit, output, files } => {
-            cmd_clean(threads, kit, output, files);
+            Commands::Clean { threads, kit, output, files } => {
+        if let Err(e) = porkchop::clean::run(threads, &kit, &output, files) {
+            eprintln!("clean error: {:?}", e);
+            std::process::exit(1);
         }
-
-        Commands::ListKits { format, full, truncate } => { cmd_list_kits(format, full, truncate); }
+    },
+Commands::ListKits { format, full, truncate } => { cmd_list_kits(format, full, truncate); }
 
         Commands::Describe { id } => {
             cmd_describe(id);
@@ -303,18 +305,3 @@ fn cmd_describe(id: String) {
         }
     }
 }
-
-
-
-
-
-
-
-/// Implementation for `porkchop clean`
-fn cmd_clean(threads: usize, kit: String, output: std::path::PathBuf, files: Vec<std::path::PathBuf>) {
-    if let Err(e) = porkchop::clean::run(threads, &kit, &output, files) {
-        eprintln!("clean error: {:?}", e);
-        std::process::exit(1);
-    }
-}
-
