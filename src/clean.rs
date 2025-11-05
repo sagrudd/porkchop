@@ -5,8 +5,19 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+static mut LAST_DRAW: Option<Instant> = None;
 
 use rayon::prelude::*;
+
+fn gzip_level() -> flate2::Compression {
+    use std::env;
+    let lvl = env::var("PORKCHOP_GZIP_LEVEL")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .map(|v| v.min(9))
+        .unwrap_or(1);
+    flate2::Compression::new(lvl)
+}
 
 #[derive(Clone)]
 struct OwnedRecord {
@@ -23,6 +34,8 @@ fn write_fastq_record<W: std::io::Write>(w: &mut W, id: &str, seq: &[u8], qual: 
     w.write_all(b"\n+\n")?;
     w.write_all(qual)?;
     w.write_all(b"\n")?;
+    // return moved to end for cleanup
+
     Ok(())
 }
 
@@ -31,7 +44,7 @@ mod edwrap {
     use edlib_rs::edlibrs::{edlibAlignRs, EdlibAlignConfigRs, EdlibAlignModeRs, EdlibAlignTaskRs, EdlibEqualityPairRs};
     pub struct Hit { pub start: i32, pub end: i32, pub edits: i32 }
     pub fn locate(pattern: &[u8], text: &[u8], max_edits: i32) -> Option<Hit> {
-        // edlib_rs 0.1.2 expects a slice for `additionalequalities`
+        // edlib_rs 0.1.2 expects a slice for 'additionalequalities'
         let empty: &[EdlibEqualityPairRs] = &[];
         let cfg = EdlibAlignConfigRs { k: max_edits, mode: EdlibAlignModeRs::EDLIB_MODE_HW, task: EdlibAlignTaskRs::EDLIB_TASK_LOC, additionalequalities: empty };
         let res = edlibAlignRs(pattern, text, &cfg);
@@ -139,9 +152,9 @@ let s = normalize_seq(seq);
 
     let id = format!("trim={}..{};len={};{}", left_cut, right_cut, n, notes.join(";"));
     let modality = ModalityKey {
-        left:    left_best.map(|t| t.3.to_string()).unwrap_or_else(|| "—".into()),
-        right:   right_best.map(|t| t.3.to_string()).unwrap_or_else(|| "—".into()),
-        barcode: barcode.unwrap_or_else(|| "—".into()),
+        left:    left_best.map(|t| t.3.to_string()).unwrap_or_else(|| "-".into()),
+        right:   right_best.map(|t| t.3.to_string()).unwrap_or_else(|| "-".into()),
+        barcode: barcode.unwrap_or_else(|| "-".into()),
     };
     let clipped = left_best.is_some() || right_best.is_some();
     let mut structure: Vec<&str> = Vec::new();
@@ -191,6 +204,7 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
         let start = START.get_or_init(Instant::now);
         let elapsed = start.elapsed().as_secs_f64();
         let throughput = if elapsed > 0.0 { tallies.total as f64 / elapsed } else { 0.0 };
+unsafe { if LAST_DRAW.map(|t| t.elapsed() < Duration::from_millis(100)).unwrap_or(false) { return Ok(()); } }
 terminal.draw(|f| {
         let size = f.size();
         let chunks = Layout::default()
@@ -215,7 +229,7 @@ terminal.draw(|f| {
         fn build_binned<'a>(hm: &HashMap<usize,u64>, max_bars: usize) -> (Vec<(&'a str, u64)>, Vec<(String,u64)>, usize, usize, usize) {
             let mut keys_pos: Vec<usize> = hm.keys().cloned().filter(|k| *k > 0).collect();
             if keys_pos.is_empty() {
-                return (vec![("—", 0)], vec![("—".to_string(), 0)], 0, 0, 1);
+                return (vec![("-", 0)], vec![("-".to_string(), 0)], 0, 0, 1);
             }
             keys_pos.sort_unstable();
             let min_k = *keys_pos.first().unwrap();
@@ -262,12 +276,12 @@ terminal.draw(|f| {
         // Compute dynamic bins using available width
         let chart_width = std::cmp::max(10usize, bottom[1].width as usize / 2);
         let max_bars = std::cmp::max(1usize, std::cmp::min(max_bins, chart_width.saturating_sub(4)));
-        let (left_data, left_bins, left_min, left_max, left_step) = build_binned(&tallies.clip5_hist, max_bars);
-        let (right_data, right_bins, right_min, right_max, right_step) = build_binned(&tallies.clip3_hist, max_bars);
+        let (left_data, left_summary, left_min, left_max, left_step) = build_binned(&tallies.clip5_hist, max_bars);
+        let (right_data, right_summary, right_min, right_max, right_step) = build_binned(&tallies.clip3_hist, max_bars);
 
         // Legend with min/max/bin
         let legend = Paragraph::new(Text::from(format!(
-            "x: clipped nt | y: read count   |   5′: min={} max={} bin={}   |   3′: min={} max={} bin={}",
+            "x: clipped nt | y: read count   |   5': min={} max={} bin={}   |   3': min={} max={} bin={}",
             left_min, left_max, left_step, right_min, right_max, right_step
         ))).block(Block::default().borders(Borders::ALL).title("Legend"));
         f.render_widget(legend, chunks[2]);
@@ -282,12 +296,12 @@ terminal.draw(|f| {
         let bin_tables = Layout::default().direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
             .split(bottom[0]);
-        let left_table = Table::new(top_rows(&left_bins, 8), [Constraint::Percentage(70), Constraint::Length(10)])
-            .header(Row::new(vec!["5′ bin", "count"]))
-            .block(Block::default().borders(Borders::ALL).title("5′ bin counts (top 8)"));
-        let right_table = Table::new(top_rows(&right_bins, 8), [Constraint::Percentage(70), Constraint::Length(10)])
-            .header(Row::new(vec!["3′ bin", "count"]))
-            .block(Block::default().borders(Borders::ALL).title("3′ bin counts (top 8)"));
+        let left_table = Table::new(top_rows(&left_summary, 8), [Constraint::Percentage(70), Constraint::Length(10)])
+            .header(Row::new(vec!["5' bin", "count"]))
+            .block(Block::default().borders(Borders::ALL).title("5' bin counts (top 8)"));
+        let right_table = Table::new(top_rows(&right_summary, 8), [Constraint::Percentage(70), Constraint::Length(10)])
+            .header(Row::new(vec!["3' bin", "count"]))
+            .block(Block::default().borders(Borders::ALL).title("3' bin counts (top 8)"));
         f.render_widget(left_table, bin_tables[0]);
         f.render_widget(right_table, bin_tables[1]);
 
@@ -306,9 +320,20 @@ terminal.draw(|f| {
             let bar_w_left: u16 = if left_bins > 0 {
                 (left_inner / left_bins).max(1)
             } else { 1 };
+
+            // Throttle bin labels if there isn't enough room: keep every Nth label
+            let approx_label_cols = bar_w_left.max(1);
+            let max_label_slots = left_inner / (approx_label_cols.saturating_mul(2).max(1)); // leave space between
+            let denom_left = usize::max(1, max_label_slots as usize);
+            let stride_left: usize = if left_bins == 0 { 1 } else { ((left_bins as usize) + denom_left - 1) / denom_left };
+            // Build render-time data from the String summary to avoid leaking labels
+            let left_pairs_render: Vec<(String, u64)> = left_summary.iter().enumerate().map(|(i,(s,v))| {
+                if stride_left == 1 || i % stride_left == 0 { (s.clone(), *v) } else { (String::from(""), *v) }
+            }).collect();
+            let left_data_render: Vec<(&str, u64)> = left_pairs_render.iter().map(|(s,v)| (s.as_str(), *v)).collect();
 let left_chart = BarChart::default()
-            .block(Block::default().borders(Borders::ALL).title("5′ clipped (nt) — count"))
-            .data(&left_data)
+            .block(Block::default().borders(Borders::ALL).title("5' clipped (nt) - count"))
+            .data(&left_data_render)
             .bar_width(bar_w_left)
             .bar_gap(0)
             .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
@@ -322,9 +347,18 @@ let left_chart = BarChart::default()
             let bar_w_right: u16 = if right_bins > 0 {
                 (right_inner / right_bins).max(1)
             } else { 1 };
+
+            let approx_label_cols_r = bar_w_right.max(1);
+            let max_label_slots_r = right_inner / (approx_label_cols_r.saturating_mul(2).max(1));
+            let denom_right = usize::max(1, max_label_slots_r as usize);
+            let stride_right: usize = if right_bins == 0 { 1 } else { ((right_bins as usize) + denom_right - 1) / denom_right };
+            let right_pairs_render: Vec<(String, u64)> = right_summary.iter().enumerate().map(|(i,(s,v))| {
+                if stride_right == 1 || i % stride_right == 0 { (s.clone(), *v) } else { (String::from(""), *v) }
+            }).collect();
+            let right_data_render: Vec<(&str, u64)> = right_pairs_render.iter().map(|(s,v)| (s.as_str(), *v)).collect();
 let right_chart = BarChart::default()
-            .block(Block::default().borders(Borders::ALL).title("3′ clipped (nt) — count"))
-            .data(&right_data)
+            .block(Block::default().borders(Borders::ALL).title("3' clipped (nt) - count"))
+            .data(&right_data_render)
             .bar_width(bar_w_right)
             .bar_gap(0)
             .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
@@ -333,6 +367,9 @@ let right_chart = BarChart::default()
         f.render_widget(left_chart, charts_row[0]);
         f.render_widget(right_chart, charts_row[1]);
     })?;
+unsafe { LAST_DRAW = Some(Instant::now()); }
+    // return moved to end for cleanup
+
     Ok(())
 }
 fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, tui_max_bins: usize, cancel: Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
@@ -346,7 +383,7 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, t
         let _ = enable_raw_mode();
         let _ = execute!(out, EnterAlternateScreen);
         let backend = CrosstermBackend::new(out);
-        let mut term = ratatui::Terminal::new(backend).expect("tui terminal");
+        let mut term = ratatui::Terminal::new(backend).expect("validated kit");
 
         
             let mut bins = tui_max_bins.clamp(1, 100);
@@ -423,10 +460,15 @@ fn parse_trim_from_id(id: &str) -> (usize, usize) {
 }
 fn ensure_known_kit(kit: &str) -> anyhow::Result<()> {
     if crate::get_sequences_for_kit(kit).is_none() {
-        anyhow::bail!("Unknown kit: {}. Use `porkchop list-kits --format table` to see valid kit ids.", kit);
+        anyhow::bail!(
+            "Unknown kit: {}. Use \"porkchop list-kits --format table\" to see valid kit ids.",
+            kit
+        );
     }
     Ok(())
 }
+
+    // return moved to end for cleanup
 
 fn split_supported_files(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut ok = Vec::new();
@@ -447,11 +489,26 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
 
     let motifs = motifs_for_kit(kit_ref);
 
-    let ofh = File::create(out_path)?;
-    let writer = BufWriter::new(ofh);
-    let mut gz = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
+    // Pipeline: processing thread -> bounded channel -> writer thread (owns gz)
+    let out_path_owned = out_path.to_path_buf();
+    let (txw, rxw) = std::sync::mpsc::sync_channel::<Vec<(String, Vec<u8>, Vec<u8>)>>(8);
+    let writer_handle = std::thread::spawn(move || -> anyhow::Result<()> {
+        let ofh = File::create(&out_path_owned)?;
+        let writer = BufWriter::new(ofh);
+        let mut gz = flate2::write::GzEncoder::new(writer, gzip_level());
+        while let Ok(batch) = rxw.recv() {
+            for (id, seq, qual) in batch {
+                write_fastq_record(&mut gz, &id, &seq, &qual)?;
+            }
+        }
+        // finalize gzip stream
+        let _ = gz.finish();
+        // return moved to end for cleanup
+    
+        Ok(())
+});
 
-    const CHUNK: usize = 2000;
+    const CHUNK: usize = 200;
 
     for path in input_files {
         if cancel.load(Ordering::Relaxed) { break; }
@@ -474,7 +531,12 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                    for (name, cr) in &processed {
+let mut out_batch: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{}
+ {}", name, cr.rec.id); out_batch.push((rid, cr.rec.seq.clone(), cr.rec.qual.clone())); 
+let _ = txw.send(out_batch);
+}
                     buf.clear();
                 }
             }
@@ -486,7 +548,12 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                for (name, cr) in &processed {
+let mut out_batch: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{}
+ {}", name, cr.rec.id); out_batch.push((rid, cr.rec.seq.clone(), cr.rec.qual.clone())); 
+let _ = txw.send(out_batch);
+}
             }
 
         } else if lower.ends_with(".bam") {
@@ -506,7 +573,12 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                    for (name, cr) in &processed {
+let mut out_batch: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{}
+ {}", name, cr.rec.id); out_batch.push((rid, cr.rec.seq.clone(), cr.rec.qual.clone())); 
+let _ = txw.send(out_batch);
+}
                     buf.clear();
                 }
             }
@@ -518,7 +590,12 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                for (name, cr) in &processed {
+let mut out_batch: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{}
+ {}", name, cr.rec.id); out_batch.push((rid, cr.rec.seq.clone(), cr.rec.qual.clone())); 
+let _ = txw.send(out_batch);
+}
             }
 
         } else {
@@ -542,33 +619,44 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                     .map(|r| annotate_and_trim_one(&r.seq, &r.qual, kit_id, &motifs, edits))
                     .collect();
                 for (src, cr) in owned_chunk.iter().zip(processed.iter()) {
-                    let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc));
+                    let mut out_batch: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc));
                     let rid = format!("{} {}", src.id, cr.rec.id);
-                    write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?;
-                }
+                    out_batch.push((rid, cr.rec.seq.clone(), cr.rec.qual.clone()));
+                
+let _ = txw.send(out_batch);
+}
             }
         }
     }
 
-    gz.finish()?;
-    Ok(())
+    // gz.finish() now handled in writer thread
+    // return moved to end for cleanup
+
+    // finish pipeline: close channel and join writer
+    drop(txw);
+    let _ = writer_handle.join();
+
+// finish pipeline: close the writer channel and join the writer thread
+Ok(())
 }
 
 pub fn run(threads: usize, kit: &str, edits: i32, tui_max_bins: usize, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global();
+
         ensure_known_kit(kit)?;
-if crate::get_sequences_for_kit(kit).is_none() {
-        anyhow::bail!("Unknown kit: {}. Use `porkchop list-kits --format table` to see valid kit ids.", kit);
-    }
+ensure_known_kit(kit)?;
     let (ok, bad) = split_supported_files(files);
     if !bad.is_empty() {
         let mut msg = String::from("Unsupported file type(s):\n");
         for p in &bad { msg.push_str(&format!("  - {}\n", p.display())); }
-        msg.push_str("Allowed: SAM (.sam), BAM (.bam), FASTQ (.fastq/.fq), and gzipped FASTQ (.fastq.gz/.fq.gz).");
+        msg.push_str("Allowed: SAM (.sam), BAM (.bam), FASTQ (.fastq/.fq), and gzipped FASTQ (.fastq.gz/.fq.gz).\n");
         anyhow::bail!(msg);
     }
 
     let threads_eff = if threads == 0 { std::cmp::max(1, num_cpus::get()) } else { threads };
     rayon::ThreadPoolBuilder::new().num_threads(threads_eff).build_global().ok();
+rayon::ThreadPoolBuilder::new().num_threads(threads_eff).build_global().ok();
 
     let kit_ref: &'static crate::kit::Kit = crate::get_sequences_for_kit(kit).expect("validated kit");
     let (tx, rx) = mpsc::channel::<StatEvent>();
