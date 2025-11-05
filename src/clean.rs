@@ -1,3 +1,4 @@
+use crossterm::event::{self, Event, KeyCode};
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -328,7 +329,18 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, t
         let mut done = false;
 
         while !done {
-            while let Ok(ev) = rx.try_recv() {
+            
+            // minimal 'q' to quit (clean dashboard)
+            if event::poll(std::time::Duration::from_millis(16)).unwrap_or(false) {
+                if let Ok(ev) = event::read() {
+                    if let Event::Key(k) = ev {
+                        if matches!(k.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
+                            done = true;
+                        }
+                    }
+                }
+            }
+while let Ok(ev) = rx.try_recv() {
                 match ev {
                     StatEvent::Seen(modality, clipped) => {
                         tallies.total += 1;
