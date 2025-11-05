@@ -1,4 +1,5 @@
 use crossterm::event::{self, Event, KeyCode};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -311,7 +312,7 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
     })?;
     Ok(())
 }
-fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, tui_max_bins: usize) -> std::thread::JoinHandle<()> {
+fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, tui_max_bins: usize, cancel: Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
     use crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
     use ratatui::backend::CrosstermBackend;
     use std::io::stdout;
@@ -324,7 +325,9 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, t
         let backend = CrosstermBackend::new(out);
         let mut term = ratatui::Terminal::new(backend).expect("tui terminal");
 
-        let tick = Duration::from_millis(200);
+        
+            let mut bins = tui_max_bins.clamp(1, 100);
+let tick = Duration::from_millis(200);
         let mut last = Instant::now();
         let mut done = false;
 
@@ -334,9 +337,7 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, t
             if event::poll(std::time::Duration::from_millis(16)).unwrap_or(false) {
                 if let Ok(ev) = event::read() {
                     if let Event::Key(k) = ev {
-                        if matches!(k.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
-                            done = true;
-                        }
+                        if matches!(k.code, KeyCode::Char('q') | KeyCode::Char('Q')) { cancel.store(true, Ordering::Relaxed); done = true; }
                     }
                 }
             }
@@ -352,7 +353,7 @@ while let Ok(ev) = rx.try_recv() {
                 }
             }
             if last.elapsed() >= tick {
-                let _ = draw_dashboard(&mut term, &tallies, tui_max_bins);
+                let _ = draw_dashboard(&mut term, &tallies, bins);
                 last = Instant::now();
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -416,7 +417,7 @@ fn split_supported_files(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (ok, bad)
 }
 
-fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str, edits: i32, kit_ref: &'static crate::kit::Kit, events: &mpsc::Sender<StatEvent>) -> anyhow::Result<()> {
+fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str, edits: i32, kit_ref: &'static crate::kit::Kit, events: &mpsc::Sender<StatEvent>, cancel: &Arc<AtomicBool>) -> anyhow::Result<()> {
     use std::fs::File;
     use std::io::BufWriter;
     use needletail::parser::parse_fastx_file;
@@ -430,6 +431,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
     const CHUNK: usize = 2000;
 
     for path in input_files {
+        if cancel.load(Ordering::Relaxed) { break; }
         let lower = path.to_string_lossy().to_ascii_lowercase();
 
         if lower.ends_with(".sam") {
@@ -438,8 +440,10 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
             let mut buf: Vec<rust_htslib::bam::Record> = Vec::new();
 
             for r in reader.records() {
+                if cancel.load(Ordering::Relaxed) { break; }
                 if let Ok(rec) = r { buf.push(rec); }
-                if buf.len() >= CHUNK {
+                if cancel.load(Ordering::Relaxed) { break; }
+                    if buf.len() >= CHUNK {
                     let processed: Vec<(String, CleanResult)> = buf.par_iter().map(|r| {
                         let name = std::str::from_utf8(r.qname()).unwrap_or("SAM");
                         let seq = r.seq().as_bytes();
@@ -468,8 +472,10 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
             let mut buf: Vec<rust_htslib::bam::Record> = Vec::new();
 
             for r in reader.records() {
+                if cancel.load(Ordering::Relaxed) { break; }
                 if let Ok(rec) = r { buf.push(rec); }
-                if buf.len() >= CHUNK {
+                if cancel.load(Ordering::Relaxed) { break; }
+                    if buf.len() >= CHUNK {
                     let processed: Vec<(String, CleanResult)> = buf.par_iter().map(|r| {
                         let name = std::str::from_utf8(r.qname()).unwrap_or("BAM");
                         let seq = r.seq().as_bytes();
@@ -543,10 +549,11 @@ if crate::get_sequences_for_kit(kit).is_none() {
 
     let kit_ref: &'static crate::kit::Kit = crate::get_sequences_for_kit(kit).expect("validated kit");
     let (tx, rx) = mpsc::channel::<StatEvent>();
-    let ui_handle = stats_thread(rx, kit_ref, tui_max_bins);
+    let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let ui_handle = stats_thread(rx, kit_ref, tui_max_bins, cancel.clone());
 
     eprintln!("clean: kit={} | threads={} | inputs={} | output={}", kit, threads_eff, ok.len(), output.display());
-    let ret = process_fastx_to_gz(output, ok, kit, edits, kit_ref, &tx);
+    let ret = process_fastx_to_gz(output, ok, kit, edits, kit_ref, &tx, &cancel);
 
     let _ = tx.send(StatEvent::Done);
     let _ = ui_handle.join();
