@@ -33,6 +33,10 @@ enum Commands {
         output: std::path::PathBuf,
         /// One or more input files (SAM, BAM, FASTQ, FASTQ.GZ)
         #[arg(value_name = "FILES", required = true)]
+
+/// Max bars/bins per histogram in the TUI (1–100; default 15)
+#[arg(long = "tui-max-bins", default_value_t = 15)]
+tui_max_bins: usize,
         files: Vec<std::path::PathBuf>,
     },
 
@@ -116,8 +120,8 @@ fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
-            Commands::Clean { threads, kit, edits, output, files } => {
-        if let Err(e) = porkchop::clean::run(threads, &kit, edits, &output, files) {
+            Commands::Clean { threads, kit, edits, tui_max_bins, output, files } => {
+        if let Err(e) = porkchop::clean::run(threads, &kit, edits, tui_max_bins, &output, files) {
             eprintln!("clean error: {:?}", e);
             std::process::exit(1);
         }

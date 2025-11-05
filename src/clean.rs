@@ -176,7 +176,7 @@ fn expected_modalities(kit: &'static crate::kit::Kit) -> BTreeSet<(String,String
     set
 }
 
-fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal<B>, tallies: &Tallies) -> std::io::Result<()> {
+fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal<B>, tallies: &Tallies, max_bins: usize) -> std::io::Result<()> {
     use ratatui::layout::{Constraint, Direction, Layout};
     use ratatui::text::Text;
     use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, BarChart};
@@ -252,8 +252,9 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
 
         // Compute dynamic bins using available width
         let chart_width = std::cmp::max(10usize, bottom[1].width as usize / 2);
-        let (left_data, left_bins, left_min, left_max, left_step) = build_binned(&tallies.clip5_hist, chart_width.saturating_sub(4));
-        let (right_data, right_bins, right_min, right_max, right_step) = build_binned(&tallies.clip3_hist, chart_width.saturating_sub(4));
+        let max_bars = std::cmp::max(1usize, std::cmp::min(max_bins, chart_width.saturating_sub(4)));
+        let (left_data, left_bins, left_min, left_max, left_step) = build_binned(&tallies.clip5_hist, max_bars);
+        let (right_data, right_bins, right_min, right_max, right_step) = build_binned(&tallies.clip3_hist, max_bars);
 
         // Legend with min/max/bin
         let legend = Paragraph::new(Text::from(format!(
@@ -311,7 +312,7 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
     })?;
     Ok(())
 }
-fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit) -> std::thread::JoinHandle<()> {
+fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, tui_max_bins: usize) -> std::thread::JoinHandle<()> {
     use crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
     use ratatui::backend::CrosstermBackend;
     use std::io::stdout;
@@ -341,7 +342,7 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit) -
                 }
             }
             if last.elapsed() >= tick {
-                let _ = draw_dashboard(&mut term, &tallies);
+                let _ = draw_dashboard(&mut term, &tallies, tui_max_bins);
                 last = Instant::now();
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -514,7 +515,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
     Ok(())
 }
 
-pub fn run(threads: usize, kit: &str, edits: i32, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
+pub fn run(threads: usize, kit: &str, edits: i32, tui_max_bins: usize, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
         ensure_known_kit(kit)?;
 if crate::get_sequences_for_kit(kit).is_none() {
         anyhow::bail!("Unknown kit: {}. Use `porkchop list-kits --format table` to see valid kit ids.", kit);
@@ -532,7 +533,7 @@ if crate::get_sequences_for_kit(kit).is_none() {
 
     let kit_ref: &'static crate::kit::Kit = crate::get_sequences_for_kit(kit).expect("validated kit");
     let (tx, rx) = mpsc::channel::<StatEvent>();
-    let ui_handle = stats_thread(rx, kit_ref);
+    let ui_handle = stats_thread(rx, kit_ref, tui_max_bins);
 
     eprintln!("clean: kit={} | threads={} | inputs={} | output={}", kit, threads_eff, ok.len(), output.display());
     let ret = process_fastx_to_gz(output, ok, kit, edits, kit_ref, &tx);
