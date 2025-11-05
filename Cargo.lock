@@ -2159,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "porkchop"
-version = "0.3.22"
+version = "0.3.25"
 dependencies = [
  "aho-corasick",
  "anyhow",

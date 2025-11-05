@@ -202,22 +202,27 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
             .block(Block::default().borders(Borders::ALL).title("Observed modalities (top 20)"));
         f.render_widget(table, chunks[0]);
 
-        // Helper to build dynamic bins for a given histogram map
+        // Helper to build dynamic bins for a given histogram map; excludes zero-length bins
         fn build_binned<'a>(hm: &HashMap<usize,u64>, max_bars: usize) -> (Vec<(&'a str, u64)>, Vec<(String,u64)>, usize, usize, usize) {
-            if hm.is_empty() {
-                return (vec![("0", 0)], vec![("0".to_string(), 0)], 0, 0, 1);
+            let mut keys_pos: Vec<usize> = hm.keys().cloned().filter(|k| *k > 0).collect();
+            if keys_pos.is_empty() {
+                return (vec![("—", 0)], vec![("—".to_string(), 0)], 0, 0, 1);
             }
-            let min_k = *hm.keys().min().unwrap();
-            let max_k = *hm.keys().max().unwrap();
+            keys_pos.sort_unstable();
+            let min_k = *keys_pos.first().unwrap();
+            let max_k = *keys_pos.last().unwrap();
             let span = max_k - min_k + 1;
             let max_bars = if max_bars == 0 { 1 } else { max_bars };
             let bin_size = std::cmp::max(1usize, (span + max_bars - 1) / max_bars);
             let bin_count = (span + bin_size - 1) / bin_size;
+
             let mut bins: Vec<u64> = vec![0; bin_count];
             for (k, v) in hm.iter() {
+                if *k == 0 { continue; }
                 let idx = ((*k - min_k) / bin_size).min(bin_count - 1);
                 bins[idx] += *v;
             }
+
             let mut data: Vec<(&'a str, u64)> = Vec::with_capacity(bin_count);
             let mut summary: Vec<(String,u64)> = Vec::with_capacity(bin_count);
             for i in 0..bin_count {
@@ -232,60 +237,51 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
             (data, summary, min_k, max_k, bin_size)
         }
 
-        // Summary line
+        // Summary under table
         let summary = Paragraph::new(Text::from(format!(
             "total: {}   clipped: {}   unclippable: {}   modalities: {}",
             tallies.total, tallies.clipped, tallies.unclippable, tallies.by_structure.len()
         ))).block(Block::default().borders(Borders::ALL).title("Summary"));
         f.render_widget(summary, chunks[1]);
 
-        // Bottom area split vertically into a small bin summary row and the charts row
+        // Bottom area split vertically into small bin-summary row and charts row
         let bottom = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(6), Constraint::Min(6)].as_ref())
             .split(chunks[3]);
 
         // Compute dynamic bins using available width
-        let chart_width = std::cmp::max(10usize, bottom[1].width as usize / 2); // approximate half width per chart
+        let chart_width = std::cmp::max(10usize, bottom[1].width as usize / 2);
         let (left_data, left_bins, left_min, left_max, left_step) = build_binned(&tallies.clip5_hist, chart_width.saturating_sub(4));
         let (right_data, right_bins, right_min, right_max, right_step) = build_binned(&tallies.clip3_hist, chart_width.saturating_sub(4));
 
-        // Legend with min/max and bin size for both ends
+        // Legend with min/max/bin
         let legend = Paragraph::new(Text::from(format!(
             "x: clipped nt | y: read count   |   5′: min={} max={} bin={}   |   3′: min={} max={} bin={}",
             left_min, left_max, left_step, right_min, right_max, right_step
         ))).block(Block::default().borders(Borders::ALL).title("Legend"));
         f.render_widget(legend, chunks[2]);
 
-        // Bin summaries (top row of bottom area): show top bins with counts for each side
+        // Bin summaries
         fn top_rows<'a>(pairs: &[(String,u64)], n: usize) -> Vec<Row<'a>> {
             let mut v = pairs.to_vec();
             v.sort_by(|a,b| b.1.cmp(&a.1));
             v.truncate(n);
             v.into_iter().map(|(k,c)| Row::new(vec![k, c.to_string()])).collect()
         }
-
         let bin_tables = Layout::default().direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
             .split(bottom[0]);
-
-        let left_table = Table::new(
-                top_rows(&left_bins, 8),
-                [Constraint::Percentage(70), Constraint::Length(10)],
-            )
+        let left_table = Table::new(top_rows(&left_bins, 8), [Constraint::Percentage(70), Constraint::Length(10)])
             .header(Row::new(vec!["5′ bin", "count"]))
             .block(Block::default().borders(Borders::ALL).title("5′ bin counts (top 8)"));
-        let right_table = Table::new(
-                top_rows(&right_bins, 8),
-                [Constraint::Percentage(70), Constraint::Length(10)],
-            )
+        let right_table = Table::new(top_rows(&right_bins, 8), [Constraint::Percentage(70), Constraint::Length(10)])
             .header(Row::new(vec!["3′ bin", "count"]))
             .block(Block::default().borders(Borders::ALL).title("3′ bin counts (top 8)"));
-
         f.render_widget(left_table, bin_tables[0]);
         f.render_widget(right_table, bin_tables[1]);
 
-        // Charts (bottom row of bottom area)
+        // Charts
         let charts_row = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
@@ -340,7 +336,7 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit) -
                         if clipped { tallies.clipped += 1; } else { tallies.unclippable += 1; }
                         *tallies.by_structure.entry(modality).or_insert(0) += 1;
                     }
-                    StatEvent::Clip(l5, l3) => { *tallies.clip5_hist.entry(l5).or_insert(0) += 1; *tallies.clip3_hist.entry(l3).or_insert(0) += 1; },
+                    StatEvent::Clip(l5, l3) => { if l5>0 { *tallies.clip5_hist.entry(l5).or_insert(0) += 1; } if l3>0 { *tallies.clip3_hist.entry(l3).or_insert(0) += 1; } },
                     StatEvent::Done => { done = true; }
                 }
             }
