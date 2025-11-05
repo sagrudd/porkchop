@@ -135,7 +135,7 @@ let s = normalize_seq(seq);
     let new_seq  = s[start..end].to_vec();
     let new_qual = if !qual.is_empty() { qual[start..end].to_vec() } else { vec![b'I'; new_seq.len()] };
 
-    let id = format!("trim={}..{};len={};{}", left_cut, right_cut, n, notes.join(";"));
+    let id = format!("trim={}..{};{}", left_cut, right_cut, notes.join(";"));
     let modality = ModalityKey {
         left:    left_best.map(|t| t.3.to_string()).unwrap_or_else(|| "—".into()),
         right:   right_best.map(|t| t.3.to_string()).unwrap_or_else(|| "—".into()),
@@ -216,11 +216,11 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
         let right_chart = BarChart::default()
             .block(Block::default().borders(Borders::ALL).title("3' clipped (nt)"))
             .data(&right_data);
-        // duplicate removed
+        f.render_widget(summary, chunks[0]);
         f.render_widget(left_chart, charts_row[0]);
         f.render_widget(right_chart, charts_row[1]);
 
-        f.render_widget(&summary, chunks[0]);
+        f.render_widget(summary, chunks[0]);
 
         let mut rows: Vec<(String,u64)> = tallies.by_structure.iter().map(|(k,v)|(k.clone(),*v)).collect();
         rows.sort_by(|a,b| b.1.cmp(&a.1));
@@ -266,7 +266,6 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit) -
                         if clipped { tallies.clipped += 1; } else { tallies.unclippable += 1; }
                         *tallies.by_structure.entry(modality).or_insert(0) += 1;
                     }
-                    StatEvent::Clip(l5, l3) => { *tallies.clip5_hist.entry(l5).or_insert(0) += 1; *tallies.clip3_hist.entry(l3).or_insert(0) += 1; },
                     StatEvent::Done => { done = true; }
                 }
             }
@@ -285,36 +284,21 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit) -
 }
 
 
-
-fn parse_trim_from_id(id: &str) -> (usize, usize) {
-    // expects id like "trim=a..b;len=n;..."
-    let mut left = 0usize;
-    let mut right = 0usize;
-    let mut total = None::<usize>;
-
+fn parse_trim_from_id(id: &str, orig_len: usize) -> (usize, usize) {
+    // expects id like "trim=a..b;..."
     if let Some(rest) = id.strip_prefix("trim=") {
-        let parts: Vec<&str> = rest.split(';').collect();
-        if let Some(range) = parts.get(0) {
+        if let Some((range, _rest)) = rest.split_once(';') {
             if let Some((a, b)) = range.split_once("..") {
-                if let (Ok(l), Ok(r)) = (a.parse::<i32>(), b.parse::<i32>()) {
-                    left = if l > 0 { l as usize } else { 0 };
-                    right = if r >= 0 { r as usize } else { 0 };
-                }
-            }
-        }
-        for part in parts.iter().skip(1) {
-            if let Some(val) = part.strip_prefix("len=") {
-                if let Ok(n) = val.parse::<usize>() {
-                    total = Some(n);
-                    break;
+                if let (Ok(lc), Ok(rc)) = (a.parse::<i32>(), b.parse::<i32>()) {
+                    let l5 = if lc > 0 { lc as usize } else { 0 };
+                    let r  = if rc >= 0 { rc as usize } else { orig_len };
+                    let l3 = if r <= orig_len { orig_len - r } else { 0 };
+                    return (l5, l3);
                 }
             }
         }
     }
-    let total = total.unwrap_or_else(|| right.max(left));
-    let clip5 = left;
-    let clip3 = if right <= total { total - right } else { 0 };
-    (clip5, clip3)
+    (0, 0)
 }
 fn ensure_known_kit(kit: &str) -> anyhow::Result<()> {
     if crate::get_sequences_for_kit(kit).is_none() {
@@ -366,7 +350,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id, src.seq.len()); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
                     buf.clear();
                 }
             }
@@ -378,7 +362,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id, src.seq.len()); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
             }
 
         } else if lower.ends_with(".bam") {
@@ -396,7 +380,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                    for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id, src.seq.len()); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
                     buf.clear();
                 }
             }
@@ -408,7 +392,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                         let cr = annotate_and_trim_one(&seq, &qual, kit_id, &motifs, edits);
                         (name.to_string(), cr)
                     }).collect();
-                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
+                for (name, cr) in &processed { let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id, src.seq.len()); let _ = events.send(StatEvent::Clip(lc, rc)); let rid = format!("{} {}", name, cr.rec.id); write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?; }
             }
 
         } else {
@@ -432,7 +416,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                     .map(|r| annotate_and_trim_one(&r.seq, &r.qual, kit_id, &motifs, edits))
                     .collect();
                 for (src, cr) in owned_chunk.iter().zip(processed.iter()) {
-                    let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc)); let (lc, rc) = parse_trim_from_id(&cr.rec.id); let _ = events.send(StatEvent::Clip(lc, rc));
+                    let _ = events.send(StatEvent::Seen(cr.structure.clone(), cr.clipped)); let (lc, rc) = parse_trim_from_id(&cr.rec.id, src.seq.len()); let _ = events.send(StatEvent::Clip(lc, rc));
                     let rid = format!("{} {}", src.id, cr.rec.id);
                     write_fastq_record(&mut gz, &rid, &cr.rec.seq, &cr.rec.qual)?;
                 }
