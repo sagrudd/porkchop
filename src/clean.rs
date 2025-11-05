@@ -180,67 +180,141 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
     use ratatui::layout::{Constraint, Direction, Layout};
     use ratatui::text::Text;
     use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, BarChart};
+    use std::collections::HashMap;
 
     terminal.draw(|f| {
         let size = f.size();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Min(10), Constraint::Length(3)].as_ref())
+            .constraints([Constraint::Min(8), Constraint::Length(3), Constraint::Length(2), Constraint::Min(12)].as_ref())
             .split(size);
 
-        let summary = Paragraph::new(Text::from(format!(
-            "total: {}   clipped: {}   unclippable: {}   modalities: {}",
-            tallies.total, tallies.clipped, tallies.unclippable, tallies.by_structure.len()
-        ))).block(Block::default().borders(Borders::ALL).title("Summary"));
-        // Build histogram datasets
-        fn map_to_barchart<'a>(hm: &HashMap<usize,u64>, max_bins: usize) -> Vec<(&'a str, u64)> {
-            let mut keys: Vec<usize> = hm.keys().cloned().collect();
-            keys.sort_unstable();
-            if keys.len() > max_bins {
-                keys = keys[keys.len()-max_bins..].to_vec();
-            }
-            keys.into_iter().map(|k| {
-                let lbl = Box::leak(format!("{}", k).into_boxed_str());
-                (lbl as &str, *hm.get(&k).unwrap_or(&0))
-            }).collect()
-        }
-        let left_data = map_to_barchart(&tallies.clip5_hist, 30);
-        let right_data = map_to_barchart(&tallies.clip3_hist, 30);
-        let charts_row = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-            .split(chunks[2]);
-        let left_chart = BarChart::default()
-            .block(Block::default().borders(Borders::ALL).title("5' clipped (nt)"))
-            .data(&left_data);
-        let right_chart = BarChart::default()
-            .block(Block::default().borders(Borders::ALL).title("3' clipped (nt)"))
-            .data(&right_data);
-        // duplicate removed
-        f.render_widget(left_chart, charts_row[0]);
-        f.render_widget(right_chart, charts_row[1]);
-
-        f.render_widget(&summary, chunks[0]);
-
-        let mut rows: Vec<(String,u64)> = tallies.by_structure.iter().map(|(k,v)|(k.clone(),*v)).collect();
+        // Observed contexts (top)
+        let mut rows: Vec<(String, u64)> = tallies.by_structure.iter().map(|(k,v)| (k.clone(), *v)).collect();
         rows.sort_by(|a,b| b.1.cmp(&a.1));
         rows.truncate(20);
         let table_rows = rows.into_iter().map(|(k,c)| Row::new(vec![k, c.to_string()]));
-let table = Table::new(
+        let table = Table::new(
             table_rows,
             [Constraint::Percentage(80), Constraint::Length(10)],
         )
             .header(Row::new(vec!["Structure", "Count"]))
-            .block(Block::default().borders(Borders::ALL).title("Observed modalities (top 20)"))
-            ;
-        f.render_widget(table, chunks[2]);
+            .block(Block::default().borders(Borders::ALL).title("Observed modalities (top 20)"));
+        f.render_widget(table, chunks[0]);
 
-        let canonical = Paragraph::new(Text::from("Canonical structure: sequencing adapter > barcode > insert > reverse barcode > reverse adapter"))
-            .block(Block::default().borders(Borders::ALL).title("Model"));
-        f.render_widget(canonical, chunks[2]);
-}).map(|_| ())
+        // Helper to build dynamic bins for a given histogram map
+        fn build_binned<'a>(hm: &HashMap<usize,u64>, max_bars: usize) -> (Vec<(&'a str, u64)>, Vec<(String,u64)>, usize, usize, usize) {
+            if hm.is_empty() {
+                return (vec![("0", 0)], vec![("0".to_string(), 0)], 0, 0, 1);
+            }
+            let min_k = *hm.keys().min().unwrap();
+            let max_k = *hm.keys().max().unwrap();
+            let span = max_k - min_k + 1;
+            let max_bars = if max_bars == 0 { 1 } else { max_bars };
+            let bin_size = std::cmp::max(1usize, (span + max_bars - 1) / max_bars);
+            let bin_count = (span + bin_size - 1) / bin_size;
+            let mut bins: Vec<u64> = vec![0; bin_count];
+            for (k, v) in hm.iter() {
+                let idx = ((*k - min_k) / bin_size).min(bin_count - 1);
+                bins[idx] += *v;
+            }
+            let mut data: Vec<(&'a str, u64)> = Vec::with_capacity(bin_count);
+            let mut summary: Vec<(String,u64)> = Vec::with_capacity(bin_count);
+            for i in 0..bin_count {
+                let start = min_k + i*bin_size;
+                let end = std::cmp::min(start + bin_size - 1, max_k);
+                let lbl = if bin_size == 1 { format!("{}", start) } else { format!("{}-{}", start, end) };
+                let leaked: &'a str = Box::leak(lbl.clone().into_boxed_str());
+                let count = bins[i];
+                data.push((leaked, count));
+                summary.push((lbl, count));
+            }
+            (data, summary, min_k, max_k, bin_size)
+        }
+
+        // Summary line
+        let summary = Paragraph::new(Text::from(format!(
+            "total: {}   clipped: {}   unclippable: {}   modalities: {}",
+            tallies.total, tallies.clipped, tallies.unclippable, tallies.by_structure.len()
+        ))).block(Block::default().borders(Borders::ALL).title("Summary"));
+        f.render_widget(summary, chunks[1]);
+
+        // Bottom area split vertically into a small bin summary row and the charts row
+        let bottom = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(6), Constraint::Min(6)].as_ref())
+            .split(chunks[3]);
+
+        // Compute dynamic bins using available width
+        let chart_width = std::cmp::max(10usize, bottom[1].width as usize / 2); // approximate half width per chart
+        let (left_data, left_bins, left_min, left_max, left_step) = build_binned(&tallies.clip5_hist, chart_width.saturating_sub(4));
+        let (right_data, right_bins, right_min, right_max, right_step) = build_binned(&tallies.clip3_hist, chart_width.saturating_sub(4));
+
+        // Legend with min/max and bin size for both ends
+        let legend = Paragraph::new(Text::from(format!(
+            "x: clipped nt | y: read count   |   5′: min={} max={} bin={}   |   3′: min={} max={} bin={}",
+            left_min, left_max, left_step, right_min, right_max, right_step
+        ))).block(Block::default().borders(Borders::ALL).title("Legend"));
+        f.render_widget(legend, chunks[2]);
+
+        // Bin summaries (top row of bottom area): show top bins with counts for each side
+        fn top_rows<'a>(pairs: &[(String,u64)], n: usize) -> Vec<Row<'a>> {
+            let mut v = pairs.to_vec();
+            v.sort_by(|a,b| b.1.cmp(&a.1));
+            v.truncate(n);
+            v.into_iter().map(|(k,c)| Row::new(vec![k, c.to_string()])).collect()
+        }
+
+        let bin_tables = Layout::default().direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(bottom[0]);
+
+        let left_table = Table::new(
+                top_rows(&left_bins, 8),
+                [Constraint::Percentage(70), Constraint::Length(10)],
+            )
+            .header(Row::new(vec!["5′ bin", "count"]))
+            .block(Block::default().borders(Borders::ALL).title("5′ bin counts (top 8)"));
+        let right_table = Table::new(
+                top_rows(&right_bins, 8),
+                [Constraint::Percentage(70), Constraint::Length(10)],
+            )
+            .header(Row::new(vec!["3′ bin", "count"]))
+            .block(Block::default().borders(Borders::ALL).title("3′ bin counts (top 8)"));
+
+        f.render_widget(left_table, bin_tables[0]);
+        f.render_widget(right_table, bin_tables[1]);
+
+        // Charts (bottom row of bottom area)
+        let charts_row = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(bottom[1]);
+        let max_all = std::cmp::max(
+            left_data.iter().map(|(_,v)| *v).max().unwrap_or(0),
+            right_data.iter().map(|(_,v)| *v).max().unwrap_or(0)
+        );
+        let left_chart = BarChart::default()
+            .block(Block::default().borders(Borders::ALL).title("5′ clipped (nt) — count"))
+            .data(&left_data)
+            .bar_width(1)
+            .bar_gap(0)
+            .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
+            .label_style(ratatui::style::Style::default())
+            .max(max_all);
+        let right_chart = BarChart::default()
+            .block(Block::default().borders(Borders::ALL).title("3′ clipped (nt) — count"))
+            .data(&right_data)
+            .bar_width(1)
+            .bar_gap(0)
+            .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
+            .label_style(ratatui::style::Style::default())
+            .max(max_all);
+        f.render_widget(left_chart, charts_row[0]);
+        f.render_widget(right_chart, charts_row[1]);
+    })?;
+    Ok(())
 }
-
 fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit) -> std::thread::JoinHandle<()> {
     use crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
     use ratatui::backend::CrosstermBackend;
