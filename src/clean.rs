@@ -184,7 +184,14 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
     use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, BarChart};
     use std::collections::HashMap;
 
-    terminal.draw(|f| {
+    
+        use std::time::Instant;
+        use std::sync::OnceLock;
+        static START: OnceLock<Instant> = OnceLock::new();
+        let start = START.get_or_init(Instant::now);
+        let elapsed = start.elapsed().as_secs_f64();
+        let throughput = if elapsed > 0.0 { tallies.total as f64 / elapsed } else { 0.0 };
+terminal.draw(|f| {
         let size = f.size();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -241,8 +248,8 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
 
         // Summary under table
         let summary = Paragraph::new(Text::from(format!(
-            "total: {}   clipped: {}   unclippable: {}   modalities: {}",
-            tallies.total, tallies.clipped, tallies.unclippable, tallies.by_structure.len()
+            "total: {}   clipped: {}   unclippable: {}   modalities: {}   throughput: {:.1} seq/s",
+            tallies.total, tallies.clipped, tallies.unclippable, tallies.by_structure.len(), throughput
         ))).block(Block::default().borders(Borders::ALL).title("Summary"));
         f.render_widget(summary, chunks[1]);
 
@@ -291,18 +298,34 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
             .split(bottom[1]);
         let max_left = left_data.iter().map(|(_,v)| *v).max().unwrap_or(0);
         let max_right = right_data.iter().map(|(_,v)| *v).max().unwrap_or(0);
-        let left_chart = BarChart::default()
+        
+            // Dynamically size bar width to fill panel width
+            let left_area = charts_row[0];
+            let left_bins = u16::try_from(left_data.len()).unwrap_or(0);
+            let left_inner = left_area.width.saturating_sub(2); // borders
+            let bar_w_left: u16 = if left_bins > 0 {
+                (left_inner / left_bins).max(1)
+            } else { 1 };
+let left_chart = BarChart::default()
             .block(Block::default().borders(Borders::ALL).title("5′ clipped (nt) — count"))
             .data(&left_data)
-            .bar_width(1)
+            .bar_width(bar_w_left)
             .bar_gap(0)
             .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
             .label_style(ratatui::style::Style::default())
             .max(max_left);
-        let right_chart = BarChart::default()
+        
+            // Dynamically size bar width to fill panel width
+            let right_area = charts_row[1];
+            let right_bins = u16::try_from(right_data.len()).unwrap_or(0);
+            let right_inner = right_area.width.saturating_sub(2); // borders
+            let bar_w_right: u16 = if right_bins > 0 {
+                (right_inner / right_bins).max(1)
+            } else { 1 };
+let right_chart = BarChart::default()
             .block(Block::default().borders(Borders::ALL).title("3′ clipped (nt) — count"))
             .data(&right_data)
-            .bar_width(1)
+            .bar_width(bar_w_right)
             .bar_gap(0)
             .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
             .label_style(ratatui::style::Style::default())
