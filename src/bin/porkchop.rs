@@ -32,11 +32,11 @@ enum Commands {
         #[arg(short, long, value_name = "OUT.fastq.gz")]
         output: std::path::PathBuf,
         /// One or more input files (SAM, BAM, FASTQ, FASTQ.GZ)
-        #[arg(value_name = "FILES", required = true)]
 
 /// Max bars/bins per histogram in the TUI (1–100; default 15)
-#[arg(long = "tui-max-bins", default_value_t = 15)]
-tui_max_bins: usize,
+        #[arg(long = "tui-max-bins", default_value_t = 20, value_name = "BINS", value_parser = clap::value_parser!(usize))]
+        tui_max_bins: usize,
+        #[arg(value_name = "FILES", num_args = 1..)]
         files: Vec<std::path::PathBuf>,
     },
 
@@ -63,6 +63,7 @@ tui_max_bins: usize,
     Benchmark {
         /// Input files (FASTQ/FASTA/FASTQ.GZ/SAM/BAM)
         #[arg(required = true)]
+        #[arg(value_name = "FILES", required = true)]
         files: Vec<String>,
         /// Kit id (e.g., "LSK114")
         kit: String,
@@ -87,6 +88,7 @@ tui_max_bins: usize,
     Screen {
         /// Input files (FASTQ/FASTQ.GZ/SAM/BAM)
         #[arg(required = true)]
+        #[arg(value_name = "FILES", required = true)]
         files: Vec<String>,
         /// Algorithm (default: edlib)
         #[arg(long, default_value = "edlib")]

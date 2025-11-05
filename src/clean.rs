@@ -287,10 +287,8 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
             .split(bottom[1]);
-        let max_all = std::cmp::max(
-            left_data.iter().map(|(_,v)| *v).max().unwrap_or(0),
-            right_data.iter().map(|(_,v)| *v).max().unwrap_or(0)
-        );
+        let max_left = left_data.iter().map(|(_,v)| *v).max().unwrap_or(0);
+        let max_right = right_data.iter().map(|(_,v)| *v).max().unwrap_or(0);
         let left_chart = BarChart::default()
             .block(Block::default().borders(Borders::ALL).title("5′ clipped (nt) — count"))
             .data(&left_data)
@@ -298,7 +296,7 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
             .bar_gap(0)
             .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
             .label_style(ratatui::style::Style::default())
-            .max(max_all);
+            .max(max_left);
         let right_chart = BarChart::default()
             .block(Block::default().borders(Borders::ALL).title("3′ clipped (nt) — count"))
             .data(&right_data)
@@ -306,7 +304,7 @@ fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal
             .bar_gap(0)
             .value_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
             .label_style(ratatui::style::Style::default())
-            .max(max_all);
+            .max(max_right);
         f.render_widget(left_chart, charts_row[0]);
         f.render_widget(right_chart, charts_row[1]);
     })?;
