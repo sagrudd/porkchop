@@ -633,7 +633,7 @@ let _ = txw.send(out_batch);
 Ok(())
 }
 
-pub fn run(threads: usize, kit: &str, edits: i32, tui_max_bins: usize, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
+pub fn run(threads: usize, gz_threads: usize, kit: &str, edits: i32, tui_max_bins: usize, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
     let _ = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global();
 
         ensure_known_kit(kit)?;
@@ -646,16 +646,19 @@ ensure_known_kit(kit)?;
         anyhow::bail!(msg);
     }
 
-    let threads_eff = if threads == 0 { std::cmp::max(1, num_cpus::get()) } else { threads };
-    rayon::ThreadPoolBuilder::new().num_threads(threads_eff).build_global().ok();
-rayon::ThreadPoolBuilder::new().num_threads(threads_eff).build_global().ok();
+    let total_threads = if threads == 0 { std::cmp::max(1, num_cpus::get()) } else { threads };
+    let gz_threads = std::cmp::max(1, gz_threads);
+    let gz_threads = std::cmp::min(gz_threads, total_threads.saturating_sub(1).max(1));
+    let cleaning_threads = std::cmp::max(1, total_threads.saturating_sub(gz_threads));
+    // Configure Rayon pool for cleaning work
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(cleaning_threads).build_global();
 
     let kit_ref: &'static crate::kit::Kit = crate::get_sequences_for_kit(kit).expect("validated kit");
     let (tx, rx) = mpsc::channel::<StatEvent>();
     let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let ui_handle = stats_thread(rx, kit_ref, tui_max_bins, cancel.clone());
 
-    eprintln!("clean: kit={} | threads={} | inputs={} | output={}", kit, threads_eff, ok.len(), output.display());
+    eprintln!("clean: kit={} | total_threads={} | clean_threads={} | gz_threads={} | inputs={} | output={}", kit, total_threads, cleaning_threads, gz_threads, ok.len(), output.display());
     let ret = process_fastx_to_gz(output, ok, kit, edits, kit_ref, &tx, &cancel);
 
     let _ = tx.send(StatEvent::Done);
