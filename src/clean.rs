@@ -85,18 +85,11 @@ struct CleanResult { rec: OwnedRecord, modality: ModalityKey, clipped: bool, str
 fn annotate_and_trim_one(seq: &[u8], qual: &[u8], _kit_id: &str, motifs: &[Motif], edits: i32) -> CleanResult {
     let s = normalize_seq(seq);
     let n = s.len() as i32;
-
     let mut left_best: Option<(i32, i32, i32, &str)> = None;
     let mut right_best: Option<(i32, i32, i32, &str)> = None;
     let mut barcode_left: Option<(i32, i32, i32, &str)> = None;
     let mut barcode_right: Option<(i32, i32, i32, &str)> = None;
-let s = normalize_seq(seq);
-    let n = s.len() as i32;
-
-    let mut left_best: Option<(i32, i32, i32, &str)> = None;
-    let mut right_best: Option<(i32, i32, i32, &str)> = None;
-    let mut barcode: Option<String> = None;
-
+    let barcode: Option<String> = None;
     for m in motifs {
         if let Some(hit) = edwrap::locate(m.seq, &s, edits) {
             let center = (hit.start + hit.end) / 2;
@@ -384,9 +377,7 @@ fn stats_thread(rx: mpsc::Receiver<StatEvent>, _kit: &'static crate::kit::Kit, t
         let _ = execute!(out, EnterAlternateScreen);
         let backend = CrosstermBackend::new(out);
         let mut term = ratatui::Terminal::new(backend).expect("validated kit");
-
-        
-            let mut bins = tui_max_bins.clamp(1, 100);
+    let bins = tui_max_bins.clamp(1, 100);
 let tick = Duration::from_millis(200);
         let mut last = Instant::now();
         let mut done = false;
@@ -483,8 +474,8 @@ fn split_supported_files(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
 }
 
 fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str, edits: i32, kit_ref: &'static crate::kit::Kit, events: &mpsc::Sender<StatEvent>, cancel: &Arc<AtomicBool>) -> anyhow::Result<()> {
-    use std::fs::File;
-    use std::io::BufWriter;
+    use rust_htslib::{bgzf::{Writer as BgzfWriter}, tpool::ThreadPool};
+    use std::io::Write;
     use needletail::parser::parse_fastx_file;
 
     let motifs = motifs_for_kit(kit_ref);
@@ -493,16 +484,17 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
     let out_path_owned = out_path.to_path_buf();
     let (txw, rxw) = std::sync::mpsc::sync_channel::<Vec<(String, Vec<u8>, Vec<u8>)>>(8);
     let writer_handle = std::thread::spawn(move || -> anyhow::Result<()> {
-        let ofh = File::create(&out_path_owned)?;
-        let writer = BufWriter::new(ofh);
-        let mut gz = flate2::write::GzEncoder::new(writer, gzip_level());
+        /* replaced GzEncoder with BGZF Writer */
+        let mut gz = BgzfWriter::from_path(&out_path_owned)?;
+        let tpool = ThreadPool::new(num_cpus::get_physical() as u32)?;
+        gz.set_thread_pool(&tpool)?;
         while let Ok(batch) = rxw.recv() {
             for (id, seq, qual) in batch {
                 write_fastq_record(&mut gz, &id, &seq, &qual)?;
             }
         }
         // finalize gzip stream
-        let _ = gz.finish();
+        let _ = gz.flush()?;
         // return moved to end for cleanup
     
         Ok(())
