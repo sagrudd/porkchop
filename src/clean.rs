@@ -8,17 +8,6 @@ use std::time::{Duration, Instant};
 static mut LAST_DRAW: Option<Instant> = None;
 
 use rayon::prelude::*;
-
-fn gzip_level() -> flate2::Compression {
-    use std::env;
-    let lvl = env::var("PORKCHOP_GZIP_LEVEL")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .map(|v| v.min(9))
-        .unwrap_or(1);
-    flate2::Compression::new(lvl)
-}
-
 #[derive(Clone)]
 struct OwnedRecord {
     id: String,
@@ -80,7 +69,7 @@ fn max_edits_for(len: usize) -> i32 { ((len as f64 * 0.15).ceil() as i32).max(1)
 struct ModalityKey { left: String, right: String, barcode: String }
 
 #[derive(Clone)]
-struct CleanResult { rec: OwnedRecord, modality: ModalityKey, clipped: bool, structure: String }
+struct CleanResult { rec: OwnedRecord, #[allow(dead_code)] modality: ModalityKey, clipped: bool, structure: String }
 
 fn annotate_and_trim_one(seq: &[u8], qual: &[u8], _kit_id: &str, motifs: &[Motif], edits: i32) -> CleanResult {
     let s = normalize_seq(seq);
@@ -174,15 +163,6 @@ impl Default for Tallies {
     }
 }
 enum StatEvent { Seen(String, bool), Clip(usize, usize), Done }
-
-fn expected_modalities(kit: &'static crate::kit::Kit) -> BTreeSet<(String,String)> {
-    let mut names: Vec<String> = Vec::new();
-    for s in kit.adapters_and_primers { names.push(s.name.to_string()); }
-    for s in kit.barcodes            { names.push(s.name.to_string()); }
-    let mut set = BTreeSet::new();
-    for l in &names { for r in &names { set.insert((l.clone(), r.clone())); } }
-    set
-}
 
 fn draw_dashboard<B: ratatui::backend::Backend>(terminal: &mut ratatui::Terminal<B>, tallies: &Tallies, max_bins: usize) -> std::io::Result<()> {
     use ratatui::layout::{Constraint, Direction, Layout};
@@ -473,7 +453,7 @@ fn split_supported_files(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (ok, bad)
 }
 
-fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str, edits: i32, kit_ref: &'static crate::kit::Kit, events: &mpsc::Sender<StatEvent>, cancel: &Arc<AtomicBool>) -> anyhow::Result<()> {
+fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, chunk_size: usize, kit_id: &str, edits: i32, kit_ref: &'static crate::kit::Kit, events: &mpsc::Sender<StatEvent>, cancel: &Arc<AtomicBool>) -> anyhow::Result<()> {
     use rust_htslib::{bgzf::{Writer as BgzfWriter}, tpool::ThreadPool};
     use std::io::Write;
     use needletail::parser::parse_fastx_file;
@@ -500,9 +480,9 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
         Ok(())
 });
 
-    const CHUNK: usize = 200;
 
-    for path in input_files {
+    let chunk: usize = chunk_size.max(1);
+for path in input_files {
         if cancel.load(Ordering::Relaxed) { break; }
         let lower = path.to_string_lossy().to_ascii_lowercase();
 
@@ -515,7 +495,7 @@ fn process_fastx_to_gz(out_path: &Path, input_files: Vec<PathBuf>, kit_id: &str,
                 if cancel.load(Ordering::Relaxed) { break; }
                 if let Ok(rec) = r { buf.push(rec); }
                 if cancel.load(Ordering::Relaxed) { break; }
-                    if buf.len() >= CHUNK {
+                    if buf.len() >= chunk {
                     let processed: Vec<(String, CleanResult)> = buf.par_iter().map(|r| {
                         let name = std::str::from_utf8(r.qname()).unwrap_or("SAM");
                         let seq = r.seq().as_bytes();
@@ -557,7 +537,7 @@ let _ = txw.send(out_batch);
                 if cancel.load(Ordering::Relaxed) { break; }
                 if let Ok(rec) = r { buf.push(rec); }
                 if cancel.load(Ordering::Relaxed) { break; }
-                    if buf.len() >= CHUNK {
+                    if buf.len() >= chunk {
                     let processed: Vec<(String, CleanResult)> = buf.par_iter().map(|r| {
                         let name = std::str::from_utf8(r.qname()).unwrap_or("BAM");
                         let seq = r.seq().as_bytes();
@@ -593,8 +573,8 @@ let _ = txw.send(out_batch);
         } else {
             let mut reader = parse_fastx_file(&path)?;
             loop {
-                let mut owned_chunk: Vec<OwnedRecord> = Vec::with_capacity(CHUNK);
-                for _ in 0..CHUNK {
+                let mut owned_chunk: Vec<OwnedRecord> = Vec::with_capacity(chunk);
+                for _ in 0..chunk {
                     match reader.next() {
                         Some(Ok(rec)) => {
                             let id   = String::from_utf8_lossy(rec.id()).to_string();
@@ -633,7 +613,7 @@ let _ = txw.send(out_batch);
 Ok(())
 }
 
-pub fn run(threads: usize, gz_threads: usize, kit: &str, edits: i32, tui_max_bins: usize, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
+pub fn run(threads: usize, gz_threads: usize, chunk_size: usize, kit: &str, edits: i32, tui_max_bins: usize, output: &Path, files: Vec<PathBuf>) -> anyhow::Result<()> {
     let _ = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global();
 
         ensure_known_kit(kit)?;
@@ -658,8 +638,8 @@ ensure_known_kit(kit)?;
     let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let ui_handle = stats_thread(rx, kit_ref, tui_max_bins, cancel.clone());
 
-    eprintln!("clean: kit={} | total_threads={} | clean_threads={} | gz_threads={} | inputs={} | output={}", kit, total_threads, cleaning_threads, gz_threads, ok.len(), output.display());
-    let ret = process_fastx_to_gz(output, ok, kit, edits, kit_ref, &tx, &cancel);
+    eprintln!("clean: kit={} | total_threads={} | clean_threads={} | gz_threads={} | chunk_size={} | inputs={} | output={}", kit, total_threads, cleaning_threads, gz_threads, chunk_size, ok.len(), output.display());
+    let ret = process_fastx_to_gz(output, ok, chunk_size, kit, edits, kit_ref, &tx, &cancel);
 
     let _ = tx.send(StatEvent::Done);
     let _ = ui_handle.join();

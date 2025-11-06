@@ -24,7 +24,10 @@ enum Commands {
         threads: usize,
                 /// BGZF compression threads for HTSlib writer
         #[arg(long = "gz-threads", default_value_t = 2)]
-        gz_threads: usize,/// Kit id (must match a known ONT kit, e.g. "LSK114")
+        gz_threads: usize,
+        /// Number of FASTQ records per analysis chunk
+        #[arg(long = "chunk-size", default_value_t = 500)]
+        chunk_size: usize,/// Kit id (must match a known ONT kit, e.g. "LSK114")
         #[arg(short, long)]
         kit: String,
                 /// Allowed edit distance (global)
@@ -124,7 +127,7 @@ fn main() -> polars::prelude::PolarsResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
-            Commands::Clean { threads, gz_threads, kit, edits, tui_max_bins, output, files } => { if let Err(e) = porkchop::clean::run(threads, gz_threads, &kit, edits, tui_max_bins, &output, files) {
+            Commands::Clean { threads, gz_threads, chunk_size, kit, edits, tui_max_bins, output, files } => { if let Err(e) = porkchop::clean::run(threads, gz_threads, chunk_size, &kit, edits, tui_max_bins, &output, files) {
             eprintln!("clean error: {:?}", e);
             std::process::exit(1);
         }
